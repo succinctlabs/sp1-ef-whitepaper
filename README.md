@@ -14,7 +14,7 @@ Full requirements: [`resources/zkvm_architecture_whitepaper_details.pdf`](resour
 
 ## Contents
 
-- [`vanillaVM/`](vanillaVM) — reference W1 deliverable illustrating expected scope and rigor. See [`w1-sample.pdf`](vanillaVM/w1-sample.pdf) for the compiled output, or `w1-vanilla.tex` for the source.
+- [`vanillaVM-W1/`](vanillaVM-W1) — reference W1 deliverable illustrating expected scope and rigor. See [`w1-sample.pdf`](vanillaVM-W1/w1-sample.pdf) for the compiled output, or `w1-vanilla.tex` for the source.
 - [`resources/`](resources) — whitepaper requirements and supporting documents.
 
 > The vanilla zkVM is **illustrative only** — not necessarily implementable, efficient, or sound. Use it as a structural and notational guide.
