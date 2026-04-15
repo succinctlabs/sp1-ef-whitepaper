@@ -1,4 +1,4 @@
-# Sample zkVM Architecture — W1 Deliverable Template
+# Vanilla zkVM Architecture — W1 Deliverable Template
 
 This folder contains a reference example to help teams prepare their **W1 deliverable** as part of the [EF zkVM Security Sprint](https://zkevm.ethereum.foundation/blog/cryptography-research-update).
 
@@ -16,16 +16,16 @@ The EF Cryptography Research team has published [detailed requirements](https://
 
 | File | Description |
 |------|-------------|
-| `w1-sample.tex` | Reference W1 document describing a "Vanilla zkVM Architecture" |
+| `w1-vanilla.tex` | Reference W1 document describing a "Vanilla zkVM Architecture" |
 | `macros.tex` | LaTeX macros and notation used in the document |
 
-## About the Sample Document
+## About the Vanilla Document
 
-`w1-sample.tex` is a **reference example** illustrating the expected scope and level of rigor for a W1 submission. It was authored by the EF Cryptography Research team (George Kadianakis, Dmitry Khovratovich, Benedikt Wagner, Arantxa Zapico) and is dated April 8, 2026.
+`w1-vanilla.tex` is a **reference example** illustrating the expected scope and level of rigor for a W1 submission. It was authored by the EF Cryptography Research team (George Kadianakis, Dmitry Khovratovich, Benedikt Wagner, Arantxa Zapico) and is dated April 8, 2026.
 
 > **Note:** This document is intentionally illustrative. The described zkVM is not necessarily implementable, efficient, or even sound. It serves as a structural and notational guide. Submitted documents should provide additional detail where applicable.
 
-The sample covers all sections expected in a W1 document:
+The document covers all sections expected in a W1 document:
 
 1. **Execution Model** — Defines the program, VM state (program counter, registers, byte-addressed memory), execution trace, and the RV+ (RISC-V extended with Keccak and Poseidon precompiles) instruction set.
 
@@ -44,7 +44,7 @@ The sample covers all sections expected in a W1 document:
 
 ## How to Use
 
-1. Compile `w1-sample.tex` with a LaTeX distribution that includes the packages listed in its preamble (`tikz`, `tcolorbox`, `pgfplots`, `siunitx`, etc.).
+1. Compile `w1-vanilla.tex` with a LaTeX distribution that includes the packages listed in its preamble (`tikz`, `tcolorbox`, `pgfplots`, `siunitx`, etc.).
 2. Read the document alongside the [full whitepaper requirements](https://crypto.ethereum.org/docs/zkvm_architecture_whitepaper_details.pdf).
 3. Use the structure and notation as a template for your own W1 submission. Pay particular attention to the teal **instruction boxes** throughout the document — they highlight exactly what teams are expected to fill in.
 
