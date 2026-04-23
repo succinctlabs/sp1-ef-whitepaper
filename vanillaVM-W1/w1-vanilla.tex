@@ -584,152 +584,148 @@ Teams should add footnotes to each circuit subsection below linking to the corre
 Below we expose some aggregate information.
 
 \begin{center}
-\begin{tabular}{lccc}
+\begin{tabular}{lll}
 \hline
-\textbf{Circuit} & \textbf{Purpose} & Relations\\
+\textbf{Circuit} & \textbf{Purpose} & \textbf{Relation}\\
 \hline
-\multicolumn{3}{l}{\emph{Inner segment circuits (leaf layer):}}\\
-\quad\texttt{inner-step} & Segment trace & $\relation_{0,\step}$ \\
-\quad\texttt{inner-keccak} & Keccak precompile & $\relation_{0,\keccak}$ \\
-\quad\texttt{inner-poseidon} & Poseidon precompile & $\relation_{0,\poseidon}$ \\
-\quad\texttt{inner-range} & Range checks & $\relation_{0,\range}$ \\
-\hline
-\texttt{segment}   & Segment proof       & $\relation_1$ \\
-\texttt{convert}  & 1-to-1 normalization & $\relation_2$ \\
-\texttt{combine}  & 2-to-1 merge     & $\relation_3$ \\
-\texttt{embed}    & final proof      & $\relation_4$ \\
+\texttt{core} (many shapes) & Core shard proof & $\relation_{\mathrm{shard}}^{(C)}$ \\
+\texttt{normalize}          & 1-to-1 shape normalization & $\relation_{\mathrm{norm}}$ \\
+\texttt{compose}            & $N$-to-1 aggregation ($1\!\leq\! N\!\leq\! 4$) & $\relation_{\mathrm{compose}}$ \\
+\texttt{deferred}           & Deferred sub-computation & $\relation_{\mathrm{def}}$ \\
 \hline
 \end{tabular}
 \end{center}
 
-
 \begin{itemize}
-  \item \emph{Inner segment circuits (leaf layer).} These four circuits jointly prove one segment; the \texttt{segment} circuit below verifies all four.
-  \begin{itemize}[label=$\cdot$]
-    \item \texttt{inner-step}: Proves the segment trace execution (with precompiles and range checks excluded).
-    \item \texttt{inner-keccak}: Proves the Keccak precompile.
-    \item \texttt{inner-poseidon}: Proves the Poseidon precompile.
-    \item \texttt{inner-range}: Proves the range checks.
-  \end{itemize}
-	\item \texttt{segment}: Verifies the four inner proofs, effectively proving one segment
-	\item \texttt{convert}: A 1-to-1 recursion circuit that verifies a single \texttt{segment} proof.
-	\item \texttt{combine}: A recursive 2-to-1 circuit that verifies two child proofs, each of which may be either a \texttt{convert} or a \texttt{combine} proof.
-	\item \texttt{embed}: The circuit that produces the final proof.
+\item \texttt{core}:
+Proves the correct execution of one shard (a chip cluster instance).
+The circuit shape varies with the chip cluster type and trace
+dimensions (Sec.~\ref{sec:core}).
+\item \texttt{normalize}:
+A 1-to-1 circuit that verifies a single core shard proof and outputs
+a proof of a fixed shape (\texttt{compress\_shape}), irrespective of
+the input shard's shape (Sec.~\ref{sec:normalize}).
+\item \texttt{compose}:
+An $N$-to-1 recursion circuit ($1\leq N\leq 4$) that aggregates
+\texttt{normalize}, \texttt{compose}, and/or \texttt{deferred} proofs
+into a single proof of \texttt{compress\_shape}
+(Sec.~\ref{sec:compose}).
+\item \texttt{deferred}:
+A 1-to-1 circuit that verifies a complete proof of a deferred
+sub-computation and wraps it as a \texttt{compress\_shape} proof
+for inclusion in the \texttt{compose} tree
+(Sec.~\ref{sec:deferred}).
 \end{itemize}
 
-
-We visualize the recursion topology in Fig.~\ref{fig:topo}. Here,
-$\pi^{\mathbf{0}}$ denotes the four inner proofs (one each for $\relation_{0,\step}$, $\relation_{0,\keccak}$, $\relation_{0,\poseidon}$, $\relation_{0,\range}$),
- $\pi^1$ are proofs of $\relation_1$ and thus the \texttt{segment} circuit. Similarly, $\pi^2$ proves the \texttt{convert} circuit, $\pi^3$ the \texttt{combine} circuit, and $\pi^4$ the \texttt{embed} circuit.
+We visualize the recursion topology in Fig.~\ref{fig:topo}.
+At the leaves, \texttt{core} shard proofs (one per chip cluster
+instance) are each normalized to \texttt{compress\_shape} by a
+\texttt{normalize} circuit.
+The resulting proofs---together with any \texttt{deferred}
+proofs---are aggregated by a tree of \texttt{compose} circuits
+(fan-in up to~4).
+The recursion terminates when all proofs have been
+aggregated into a single \texttt{compose} proof.
 
 \begin{figure}
-	\centering
-	\begin{tikzpicture}[
-		every node/.style={draw, rounded corners=2pt, minimum width=1.2em, minimum height=1.2em, inner sep=1.5pt, font=\scriptsize},
-		embed/.style={fill=purple!15},
-		combine/.style={fill=blue!12},
-		convert/.style={fill=orange!15},
-		riscv/.style={fill=green!12},
-    base/.style={fill=yellow!10},
-		level 1/.style={sibling distance=130mm},
-		level 2/.style={sibling distance=65mm},
-		level 3/.style={sibling distance=32mm},
-		level 4/.style={sibling distance=16mm},
-		level 5/.style={sibling distance=4mm},
-		level 6/.style={sibling distance=1mm},
-		level distance=11mm,
-		edge from parent/.style={draw, thin},
-		]
-		\node [embed] {$\pi^{4}$}
-		child { node [combine] {$\pi^{3}$}
-			child {
-				node [combine] {$\pi^{3}_{\bf 0}$}
-				child {
-					node [combine] {$\pi^{3}_{\bf 00}$}
-					child { node [convert] {$\pi^{2}_{\bf 000}$}
-						child { node [riscv] {$\pi^{1}_{\bf 000}$}
-							child { node [base] {} }
-							child { node [base] {} }
-							child { node [base] {} }
-							child { node [base] {$\pi^{\mathbf{0}}_{\bf 000}$} }
-						}
-					}
-					child { node [convert] {$\pi^{2}_{\bf 001}$}
-						child { node [riscv] {$\pi^{1}_{\bf 001}$}
-							child { node [base] {} }
-							child { node [base] {} }
-							child { node [base] {} }
-							child { node [base] {$\pi^{\mathbf{0}}_{\bf 001}$} }
-						}
-					}
-				}
-				child {
-					node [combine] {$\pi^{3}_{\bf 01}$}
-					child { node [convert] {$\pi^{2}_{\bf 010}$}
-						child { node [riscv] {$\pi^{1}_{\bf 010}$}
-							child { node [base] {} }
-							child { node [base] {} }
-							child { node [base] {} }
-							child { node [base] {$\pi^{\mathbf{0}}_{\bf 010}$} }
-						}
-					}
-					child { node [convert] {$\pi^{2}_{\bf 011}$}
-						child { node [riscv] {$\pi^{1}_{\bf 011}$}
-							child { node [base] {} }
-							child { node [base] {} }
-							child { node [base] {} }
-							child { node [base] {$\pi^{\mathbf{0}}_{\bf 011}$} }
-						}
-					}
-				}
-			}
-			child {
-				node [combine] {$\pi^{3}_{\bf 1}$}
-				child {
-					node [combine] {$\pi^{3}_{\bf 10}$}
-					child { node [convert] {$\pi^{2}_{\bf 100}$}
-						child { node [riscv] {$\pi^{1}_{\bf 100}$}
-							child { node [base] {} }
-							child { node [base] {} }
-							child { node [base] {} }
-							child { node [base] {$\pi^{\mathbf{0}}_{\bf 100}$} }
-						}
-					}
-					child { node [convert] {$\pi^{2}_{\bf 101}$}
-						child { node [riscv] {$\pi^{1}_{\bf 101}$}
-							child { node [base] {} }
-							child { node [base] {} }
-							child { node [base] {} }
-							child { node [base] {$\pi^{\mathbf{0}}_{\bf 101}$} }
-						}
-					}
-				}
-				child {
-					node [combine] {$\pi^{3}_{\bf 11}$}
-					child { node [convert] {$\pi^{2}_{\bf 110}$}
-						child { node [riscv] {$\pi^{1}_{\bf 110}$}
-							child { node [base] {} }
-							child { node [base] {} }
-							child { node [base] {} }
-							child { node [base] {$\pi^{\mathbf{0}}_{\bf 110}$} }
-						}
-					}
-					child { node [convert] {$\pi^{2}_{\bf 111}$}
-						child { node [riscv] {$\pi^{1}_{\bf 111}$}
-							child { node [base] {} }
-							child { node [base] {} }
-							child { node [base] {} }
-							child { node [base] {$\pi^{\mathbf{0}}_{\bf 111}$} }
-						}
-					}
-				}
-			}
-		};
-	\end{tikzpicture}
-	\caption{\label{fig:topo} Recursion topology. Colors: \colorbox{yellow!10}{\texttt{inner}}, \colorbox{green!12}{\texttt{segment}}, \colorbox{orange!15}{\texttt{convert}}, \colorbox{blue!12}{\texttt{combine}}, \colorbox{purple!15}{\texttt{embed}}.}
+\centering
+\begin{tikzpicture}[
+  box/.style={draw, rounded corners=3pt, minimum height=0.65cm,
+              inner sep=3pt, font=\scriptsize\sffamily, align=center},
+  core/.style={box, fill=yellow!20, minimum width=1.0cm},
+  norm/.style={box, fill=green!15, minimum width=1.0cm},
+  comp/.style={box, fill=blue!12, minimum width=1.2cm},
+  def/.style={box, fill=red!10, minimum width=1.0cm},
+  sub/.style={box, fill=gray!12, minimum width=1.0cm, font=\tiny\sffamily},
+  arr/.style={draw, thin, -stealth},
+]
+% --- Core shards (row 0) ---
+\node[core] (c1) at (0,   0) {core};
+\node[core] (c2) at (1.7, 0) {core};
+\node[core] (c3) at (3.4, 0) {core};
+\node[core] (c4) at (5.1, 0) {core};
+\node[core] (c5) at (6.8, 0) {core};
+\node[core] (c6) at (8.5, 0) {core};
+% --- Normalize (row 1) ---
+\node[norm] (n1) at (0,   1.15) {norm};
+\node[norm] (n2) at (1.7, 1.15) {norm};
+\node[norm] (n3) at (3.4, 1.15) {norm};
+\node[norm] (n4) at (5.1, 1.15) {norm};
+\node[norm] (n5) at (6.8, 1.15) {norm};
+\node[norm] (n6) at (8.5, 1.15) {norm};
+\foreach \i in {1,...,6} { \draw[arr] (c\i) -- (n\i); }
+% --- Compose layer 1 (row 2) ---
+\node[comp] (p1) at (1.7, 2.3) {compose};
+\node[comp] (p2) at (6.0, 2.3) {compose};
+\draw[arr] (n1) -- (p1);
+\draw[arr] (n2) -- (p1);
+\draw[arr] (n3) -- (p1);
+\draw[arr] (n4) -- (p2);
+\draw[arr] (n5) -- (p2);
+\draw[arr] (n6) -- (p2);
+% --- Deferred proof (row 1--2) ---
+\node[sub]  (sp) at (10.5, 0)    {complete\\[-1pt]sub-proof};
+\node[def] (df) at (10.5, 1.15) {deferred};
+\draw[arr] (sp) -- (df);
+% --- Compose layer 2 (row 3) ---
+\node[comp] (p3) at (5.1, 3.45) {compose};
+\draw[arr] (p1) -- (p3);
+\draw[arr] (p2) -- (p3);
+\draw[arr] (df) -- (p3);
+\end{tikzpicture}
+\caption{\label{fig:topo} Recursion topology.
+Colors:
+\colorbox{yellow!20}{\textsf{\scriptsize core}}\,,
+\colorbox{green!15}{\textsf{\scriptsize normalize}}\,,
+\colorbox{blue!12}{\textsf{\scriptsize compose}}\,,
+\colorbox{red!10}{\textsf{\scriptsize deferred}}\,.
+The tree is illustrative; the actual fan-in and depth depend on the
+number of shards and deferred proofs.}
 \end{figure}
 
-\subsection{\texttt{core} circuits}
+\paragraph{Programs vs.\ verifiers.}
+Because of recursive proof aggregation, each recursion step acts as both a
+\emph{prover} and a \emph{verifier}: the program executed by the prover
+contains the verifier for the previous step's proof system.
+For example, the \texttt{compose} program contains the compress
+verifier, which verifies \texttt{normalize}, \texttt{compose}, and
+\texttt{deferred} proofs.
+In the subsections below, when we say ``the \texttt{compose} circuit
+verifies a proof,'' we mean that the compose \emph{program}
+embeds the compress \emph{verifier} as part of its constraint system.
+
+\paragraph{Verifying key Merkle tree.}
+Each recursion circuit type may have multiple \emph{shapes}---distinct
+circuit configurations that arise from different chip clusters and
+trace dimensions.
+A verifying key $\vk$ is derived for each shape, yielding
+approximately $181{,}000$ distinct keys in total.
+These keys are organized into a Merkle tree whose root
+$\mathsf{vk\_root}$ is used to authenticate recursion proofs.
+
+The shapes are enumerated as follows:
+\begin{itemize}
+\item \textbf{Normalize} (the vast majority of leaves):
+one shape per combination of chip cluster, preprocessed and main
+stacked BaseFold column counts, and padding column counts.
+\item \textbf{Compose}: one shape per arity ($N=1,2,3,4$).
+\item \textbf{Deferred}: a single shape.
+\end{itemize}
+
+The \texttt{compose} program enforces VK authentication:
+it takes Merkle membership proofs for each input proof's verifying key
+as part of its witness, verifies them against the Merkle root, and
+checks that every input proof's $\mathsf{rpv}.\mathsf{vk\_root}$
+equals this root.
+The \texttt{deferred} program similarly verifies Merkle membership
+for its input proof's verifying key.
+The \texttt{normalize} program does not perform VK membership
+checks itself; it propagates $\mathsf{vk\_root}$ as a public value,
+which the compose verifier then checks for consistency.
+
+Note that the reason for the 1-1 normalization step is to enable
+
+\subsection{\texttt{core} circuits}\label{sec:core}
 
 To optimize the proof size and prover time,
 we introduce core shard circuits that prove
@@ -819,76 +815,230 @@ fit into one shard).
 
 
 
-\subsection{ \texttt{segment} circuit}
+\subsection{\texttt{normalize} circuit}\label{sec:normalize}
+The \texttt{normalize} circuit proves the correct verification of a single
+core shard proof. Its output is a proof of a fixed shape (\texttt{compress\_shape}),
+irrespective of the input shard proof's shape (which varies with the chip cluster).
+The circuit takes as witness a shard proof $\pi$, the verifying key $\vk$,
+a completeness flag $\mathsf{is\_complete}\in\{0,1\}$,
+a deferred-proof counter $n_{\mathsf{def}}$,
+a VK Merkle root $\mathsf{vk\_root}$,
+and a reconstructed deferred-proofs digest $d_{\mathsf{def}}^{\mathsf{recon}}$.
 
-The \texttt{segment} circuit recursively verifies the four inner proofs,
-tying them together via a shared bus commitment $\Com_B$.
-Let $\Pi_{0,j}=(\Pi_{0,j}.\mathsf{Prove}, \Pi_{0,j}.\mathsf{Verify})$
-be the SNARK for $\relation_{0,j}$, where $j\in\{\step,\keccak,\poseidon,\range\}$.
-
-$$\relation_1=\left\lbrace\begin{array}{c|c} (\hat{S}_{in},
-	\hat{S}_{out});(\Com_B,\pi_\step,\pi_\keccak,\pi_\poseidon,\pi_\range) &
-  \begin{array}{c}
-	\Pi_{0,\step}.\mathsf{Verify}((\hat{S}_{in},\, \hat{S}_{out},\, \Com_B), \pi_\step)=1\\
-  \Pi_{0,\keccak}.\mathsf{Verify}( \Com_B, \pi_\keccak)=1\\
-  \Pi_{0,\poseidon}.\mathsf{Verify}( \Com_B, \pi_\poseidon)=1\\
-  \Pi_{0,\range}.\mathsf{Verify}( \Com_B, \pi_\range)=1
-  \end{array}
-\end{array}\right\rbrace$$
-
-
-\subsection{\texttt{convert} circuit}
-
-The \texttt{convert} circuit is a 1-to-1 recursion circuit that consumes a proof of $\relation_1$ and verifies it.  Its public
-inputs are the boundary states and the segment size; its witness is the proof $\pi_1$. To formally define the relation,
-let $\Pi_1=(\Pi_1.\mathsf{Prove}, \Pi_1.\mathsf{Verify})$ be the STARK proving protocol for relation $\relation_1$.
-
-$$\relation_2=\left\lbrace\begin{array}{c|c}
-	((\hat{S}_0,\, \hat{S}_N,\, {N_{\text{seg}}});\; \pi_1) &
-	\Pi_1.\mathsf{Verify}((\hat{S}_0,\, \hat{S}_N), \pi_1)=1
-\end{array}\right\rbrace$$
-Note that triples for which the last component is not ${N_{\text{seg}}}$ are never in $\relation_2$.
-
-\subsection{\texttt{combine} circuit}
-
-The \texttt{combine} circuit is a recursive 2-to-1 circuit that verifies two child proofs, each of which may be either a \texttt{convert} proof or another \texttt{combine} proof.
-It checks three things:
+The circuit performs two categories of work:
 \begin{itemize}
-\item Each child proof is valid under either $\Pi_2.\mathsf{Verify}$ or $\Pi_3.\mathsf{Verify}$, where $\Pi_i=(\Pi_i.\mathsf{Prove}, \Pi_i.\mathsf{Verify})$ is the STARK proving protocol for relation $\relation_i$.
-\item The step counts satisfy $N_L + N_R = N$, with $N_L \geq 1$ and $N_R \geq 1$ to ensure well-founded recursion.
-\item State continuity: the witness $\hat{S}_N^L$ serves as both the final state of the left proof and the initial state of the right proof.
-\end{itemize}
-Since \texttt{combine} is self-recursive, repeated binary application naturally reduces any number of segment proofs into a single proof $\pi_3$ for the full execution.
+\item \textbf{Shard proof verification.}
+A Fiat--Shamir challenger is initialized by observing the verifying key,
+and the core shard proof is verified against this challenger
+(polynomial commitment openings and constraint satisfaction).
 
-For brevity, we write $\Vfy_i(\mathsf{x},\pi):=\Pi_i.\mathsf{Verify}(\mathsf{x},\pi)$.
-$$\relation_3=\left\lbrace\begin{array}{c|c}
-	((\hat{S}_0^L,\, \hat{S}_N^R,\, N);\; (\pi^L,\, \pi^R,\, \hat{S}_N^L, N_L, N_R)) &
+\item \textbf{Aggregation checks.}
+Outside the shard verifier, the circuit enforces cross-shard and global correctness:
+\begin{itemize}
+\item \emph{First-shard PC validation.}
+If the shard is the first execution shard,
+the circuit asserts that $\mathsf{pc\_start}$ matches the verifying key's start PC.
+
+\item \emph{Global cumulative sum accumulation.}
+The output global cumulative sum $\sigma$ is computed by adding
+the verifying key's $\mathsf{initial\_global\_cumulative\_sum}$ (if this is the first shard,
+otherwise $\mathcal{O}$) to the shard's own $\mathsf{global\_cumulative\_sum}$.
+
+\item \emph{Public values propagation.}
+The shard's public values (boundary PCs, timestamps, memory addresses,
+digests, exit codes, etc.)\ are propagated into a \texttt{RecursionPublicValues} struct
+together with the VK digest and VK Merkle root.
+A Poseidon-2 digest of these values is committed as the proof's public output.
+
+\item \emph{Completeness conditions.}
+When $\mathsf{is\_complete}=1$, the proof is expected to attest to a
+full program execution rather than a single shard, so final boundary
+conditions are checked --- including that the program has halted,
+the first shard was included,
+all ``previous'' boundary values are at their initial state,
+and the global cumulative sum equals $\mathcal{O}$
+(the identity point on the septic curve).
+\end{itemize}
+\end{itemize}
+
+Formally, let $\Pi_{\mathrm{shard}}^{(C)}$ be the SNARK for
+$\relation_{\mathrm{shard}}^{(C)}$.
+Write $\mathsf{pv}$ for the shard's public values
+(including its global cumulative sum $\sigma_{\mathrm{shard}}$)
+extracted from the proof,
+and $\mathsf{rpv}$ for the recursion public values output by the circuit.
+
+$$\relation_{\mathrm{norm}}=\left\lbrace\begin{array}{c|c}
+  \mathsf{rpv}
+  ;\;
+  (\pi,\,\vk,\,C)
+  &
   \begin{array}{c}
-	\Vfy_2((\hat{S}_0^L, \hat{S}_N^L, N_L),\, \pi^L)=1
-	\;\lor\; \Vfy_3((\hat{S}_0^L, \hat{S}_N^L, N_L),\, \pi^L)=1 \\
-	\Vfy_2((\hat{S}_N^L, \hat{S}_N^R, N_R),\, \pi^R)=1
-	\;\lor\; \Vfy_3((\hat{S}_N^L, \hat{S}_N^R, N_R),\, \pi^R)=1 \\
-	N_L + N_R = N \\
-	N_L \geq 1,\; N_R \geq 1
+  \Pi_{\mathrm{shard}}^{(C)}.\mathsf{Verify}(\mathsf{pv},\,\pi)=1\\[4pt]
+  \mathsf{rpv}.\mathsf{contains\_first\_shard}=1
+    \;\Longrightarrow\;
+    \mathsf{pv}.\mathsf{pc\_start}=\vk.\mathsf{pc\_start}\\[4pt]
+  \mathsf{rpv}.\sigma \;=\;
+    \sigma_{\mathrm{init}} + \mathsf{pv}.\sigma_{\mathrm{shard}},\quad
+    \sigma_{\mathrm{init}}:=
+    \begin{cases}
+      \vk.\sigma_0 & \text{if first shard}\\
+      \mathcal{O} & \text{otherwise}
+    \end{cases}\\[4pt]
+  \mathsf{rpv}\text{ is correctly derived from }\mathsf{pv},\;\vk,
+    \text{ and auxiliary inputs}\\[4pt]
+  \mathsf{rpv}.\mathsf{is\_complete}=1
+    \;\Longrightarrow\;
+    \varphi_{\mathrm{complete}}(\mathsf{rpv})
+  \end{array}
+\end{array}\right\rbrace$$
+where $\varphi_{\mathrm{complete}}$ asserts the final boundary conditions
+described above (program halted, first shard included, initial boundary
+values zero, $\sigma=\mathcal{O}$).
+
+\subsection{\texttt{compose} circuit}\label{sec:compose}
+
+The \texttt{compose} circuit is an $N$-to-1 recursion circuit ($1\leq N\leq 4$)
+that consumes $N$ proofs --- each of which may be a \texttt{normalize},
+\texttt{compose}, or \texttt{deferred} proof --- and produces one proof of
+the fixed shape \texttt{compress\_shape}.
+Its purpose is to aggregate a batch of proofs that cover
+contiguous portions of the execution into a single proof.
+
+The circuit performs two categories of work:
+\begin{itemize}
+\item \textbf{Proof verification.}
+Each input proof $\pi_i$ is verified against its own verifying key $\vk_i$.
+The circuit checks that every proof's $\mathsf{vk\_root}$ matches
+a single witnessed value, and that each proof's recursion public values
+have a valid digest.
+
+\item \textbf{Continuity and aggregation checks.}
+The circuit enforces that the $N$ proofs form a contiguous chain:
+\begin{itemize}
+\item \emph{Sequential continuity.}
+For each consecutive pair of proofs,
+the ``last'' boundary values of proof~$i$
+(PC, timestamp, memory addresses, page indices,
+deferred digest, exit code, syscall flags, etc.)
+must equal the ``previous'' boundary values of proof~$i{+}1$.
+\item \emph{Program identity.}
+The $\mathsf{sp1\_vk\_digest}$ and $\mathsf{proof\_nonce}$ are
+asserted to be identical across all $N$ proofs.
+\item \emph{Accumulation.}
+The global cumulative sums $\sigma_i$ from all proofs are summed
+(via elliptic curve addition on the septic curve).
+The shard counts and $\mathsf{contains\_first\_shard}$ flags
+are accumulated.
+\item \emph{Completeness conditions.}
+When $\mathsf{is\_complete}=1$,
+the same final boundary conditions as in the \texttt{normalize} circuit
+are checked via $\varphi_{\mathrm{complete}}$.
+\end{itemize}
+\end{itemize}
+
+Formally, let $\Pi_{\mathrm{comp}}$ denote the SNARK for \texttt{compress\_shape} proofs
+(used by \texttt{normalize}, \texttt{compose}, and \texttt{deferred} alike).
+Write $\mathsf{rpv}_i$ for the recursion public values of the $i$-th input proof
+($1\leq i\leq N$, $1\leq N\leq 4$),
+and $\mathsf{rpv}$ for the aggregated output.
+
+$$\relation_{\mathrm{compose}}=\left\lbrace\begin{array}{c|c}
+  \mathsf{rpv}
+  ;\;
+  (\{\vk_i,\pi_i\}_{i=1}^{N},\;\mathsf{vk\_root})
+  &
+  \begin{array}{c}
+  \forall\, i:\;
+    \Pi_{\mathrm{comp}}.\mathsf{Verify}(\mathsf{rpv}_i,\,\pi_i)=1
+    \;\wedge\;
+    \mathsf{rpv}_i.\mathsf{vk\_root}=\mathsf{vk\_root}\\[4pt]
+  \forall\, i<N:\;
+    \mathsf{rpv}_i.\mathsf{last\_*}
+    = \mathsf{rpv}_{i+1}.\mathsf{prev\_*}\\[4pt]
+  \forall\, i:\;
+    \mathsf{rpv}_i.\mathsf{sp1\_vk\_digest}
+    = \mathsf{rpv}_1.\mathsf{sp1\_vk\_digest}\\[4pt]
+  \mathsf{rpv}.\sigma \;=\;
+    \textstyle\sum_{i=1}^{N} \mathsf{rpv}_i.\sigma\\[4pt]
+  \mathsf{rpv}\text{ boundary values derived from }
+    \mathsf{rpv}_1.\mathsf{prev\_*}\text{ and }
+    \mathsf{rpv}_N.\mathsf{last\_*}\\[4pt]
+  \mathsf{rpv}.\mathsf{is\_complete}=1
+    \;\Longrightarrow\;
+    \varphi_{\mathrm{complete}}(\mathsf{rpv})
   \end{array}
 \end{array}\right\rbrace$$
 
-where $\hat{S}_0^L$ and $\hat{S}_N^R$ are the public boundary states of the combined execution,
-$\pi^L$ and $\pi^R$ are the two child proofs (each either a \texttt{convert} or \texttt{combine} proof), and $\hat{S}_N^L$ is the intermediate boundary state provided as witness.
+\noindent
+Here ``$\mathsf{last\_*}=\mathsf{prev\_*}$'' is shorthand for the continuity of all
+chained boundary values
+(PC, timestamp, memory init/finalize addresses, page indices,
+deferred digest, deferred proof index, exit code, and syscall flags).
 
-\subsection{\texttt{embed} circuit}
+\subsection{\texttt{deferred} circuit}\label{sec:deferred}
 
-The \texttt{embed} circuit produces the final proof, asserting correctness of the entire program execution
-with public initial and final states. It assumes that
-the total step count $T$ is known in advance to the verifier.
-Let $\Pi_3=(\Pi_3.\mathsf{Prove}, \Pi_3.\mathsf{Verify})$ be the STARK proving protocol for relation $\relation_3$.
+The \texttt{deferred} circuit is a 1-to-1 recursion circuit that
+takes a single supposedly complete SP1 proof
+(representing a deferred sub-computation),
+verifies it, and updates the deferred digest.
+Its output is a proof of the fixed shape \texttt{compress\_shape}
+with $\mathsf{is\_complete}=0$,
+so that it can be composed with execution shard proofs
+in the \texttt{compose} circuit.
 
-$$\relation_4=\left\lbrace\begin{array}{c|c}
-	((\hat{S}_0,\, \hat{S}_T);\; \pi_3) &
-	\Pi_3.\mathsf{Verify}((\hat{S}_0,\, \hat{S}_T,\,T),\, \pi_3)=1
+The circuit performs the following work:
+\begin{itemize}
+\item \textbf{VK Merkle verification.}
+The input proof's verifying key is checked against a
+VK Merkle tree, ensuring it belongs to the set of
+permitted programs.
+
+\item \textbf{Proof verification and validity.}
+The input proof $\pi$ is verified against its verifying key $\vk$.
+The circuit asserts that the proof is marked
+$\mathsf{is\_complete}=1$ and $\mathsf{exit\_code}=0$.
+
+\item \textbf{Deferred digest update.}
+Given an initial digest $d_0$, the circuit computes the updated digest
+$$d_1 = \mathrm{Poseidon2}\!\left(
+  d_0
+  \;\|\;
+  \mathsf{rpv}'.\mathsf{sp1\_vk\_digest}
+  \;\|\;
+  \mathsf{rpv}'.\mathsf{committed\_value\_digest}
+\right)$$
+where $\mathsf{rpv}'$ denotes the input proof's recursion public values.
+
+\item \textbf{Output construction.}
+The output recursion public values have
+$\mathsf{is\_complete}=0$,
+$\sigma=\mathcal{O}$,
+all memory and execution boundary values zeroed,
+and the deferred proof counter advanced by~$1$.
+\end{itemize}
+
+Formally:
+$$\relation_{\mathrm{def}}=\left\lbrace\begin{array}{c|c}
+  \mathsf{rpv}
+  ;\;
+  (\vk,\,\pi,\,
+   \mathsf{mkl},\,d_0,\,n_{\mathsf{def}})
+  &
+  \begin{array}{l}
+  \Pi_{\mathrm{comp}}.\mathsf{Verify}(\mathsf{rpv}',\,\pi)=1\\[3pt]
+  \mathsf{rpv}'.\mathsf{is\_complete}=1
+    \;\wedge\;
+    \mathsf{rpv}'.\mathsf{exit\_code}=0\\[3pt]
+  \vk \text{ verified against } \mathsf{mkl}\\[3pt]
+  \mathsf{rpv} \text{ records deferred digest range }
+    [d_0,\,d_1]\\[3pt]
+  \mathsf{rpv} \text{ records deferred proof range }
+    [n_{\mathsf{def}},\,n_{\mathsf{def}}{+}1]\\[3pt]
+  \mathsf{rpv}.\mathsf{is\_complete}=0,\quad
+  \mathsf{rpv}.\sigma=\mathcal{O}
+  \end{array}
 \end{array}\right\rbrace$$
-
-where $\hat{S}_0$ and $\hat{S}_T$ are the initial and final states of the entire program execution.
 
 
 \section{Proof system instantiations}
