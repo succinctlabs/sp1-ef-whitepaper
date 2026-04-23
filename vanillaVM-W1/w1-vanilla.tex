@@ -729,69 +729,95 @@ $\pi^{\mathbf{0}}$ denotes the four inner proofs (one each for $\relation_{0,\st
 	\caption{\label{fig:topo} Recursion topology. Colors: \colorbox{yellow!10}{\texttt{inner}}, \colorbox{green!12}{\texttt{segment}}, \colorbox{orange!15}{\texttt{convert}}, \colorbox{blue!12}{\texttt{combine}}, \colorbox{purple!15}{\texttt{embed}}.}
 \end{figure}
 
-\subsection{\texttt{inner} circuits}
+\subsection{\texttt{core} circuits}
 
 To optimize the proof size and prover time,
-we introduce inner segment circuits that prove
-the correctness of the segment trace, of precompiles,
-and of range checks separately. As those
-circuits share the same bus, we commit to the latter
-to make the relations succinct.
-These circuits are then recursively
-combined  to prove the correctness of the full segment.
+we introduce core shard circuits that prove
+the correctness of RISC-V execution and precompile execution.
 
-The first relation $\relation_{0,\step}$ chains
-$N_{\text{seg}}$ consecutive valid steps
-from $\hat{S}_{in}$ to $\hat{S}_{out}$,
-with the bus committed in the public input.
-The remaining three relations each assert correctness of
-all entries of a given type in the bus
-(Keccak, Poseidon, or range checks respectively),
-again with the bus committed\footnote{Without loss
-of generality we assume that the same commitment scheme is used for the bus.} in the public input.
-\begin{align}
-  \relation_{0,\step} &=\left(
-   \left((\hat{S}_{in},
-	\hat{S}_{out}, \Com_B );\;
-  (\widehat{\BBB},\{\hat{S}_i\}_{1\leq i \leq {N_{\text{seg}}}+1})\right)\;\Bigg|\quad
-  \begin{array}{c}
-    \hat{S}_1 = \hat{S}_{in}\\
-    \hat{S}_{N_{\text{seg}}+1} = \hat{S}_{out}\\
-    \bigwedge_{i=1}^{N_{\text{seg}}} \widehat{\pred{}}_{step,bus} (\hat{S}_i,\hat{S}_{i+1},\widehat{\BBB})=\mathrm{TRUE}\\
-    \Com_B = \Com(\widehat{\BBB})
-  \end{array}
- \right)\\
-  \relation_{0,\keccak} &=\left(
-   \left(( \Com_B );\;
-  (\widehat{\BBB} )\right)\;\Bigg|\quad
-  \begin{array}{c}
-    \widehat{\pred{}}_{\keccak}(\widehat{\BBB})=\mathrm{TRUE}\\
-    \Com_B = \Com(\widehat{\BBB})
-  \end{array}
- \right)\\
-  \relation_{0,\poseidon} &=\left(
-   \left(( \Com_B );\;
-  (\widehat{\BBB} )\right)\;\Bigg|\quad
-  \begin{array}{c}
-    \widehat{\pred{}}_{\poseidon}(\widehat{\BBB})=\mathrm{TRUE}\\
-    \Com_B = \Com(\widehat{\BBB})
-  \end{array}
- \right)\\
-   \relation_{0,\range} &=\left(
-   \left(( \Com_B );\;
-  (\widehat{\BBB} )\right)\;\Bigg|\quad
-  \begin{array}{c}
-    \widehat{\pred{}}_{\range}(\widehat{\BBB})=\mathrm{TRUE}\\
-    \Com_B = \Com(\widehat{\BBB})
-  \end{array}
- \right)
-\end{align}
+The circuits are determined by a ``chip cluster,'' i.e.\ a collection of chips that are proved together
+in a single shard.  All inter-shard communication is enabled by passing messages through the global
+accumulation bus, which is arithmetized as a \texttt{Global} table present in all shards.
 
-The circuits are called, respectively,
-\texttt{inner-step}, \texttt{inner-keccak}, \texttt{inner-poseidon}, and \texttt{inner-range}.
-\begin{instruction}
-Note that our writeup is a bit informal here, as we never formally defined $\Com$. Teams should do that, as the security analysis later will require a specific binding notion of $\Com$.
-\end{instruction}
+Each chip declares interactions with two possible scopes:
+\begin{itemize}
+\item \textbf{Local} interactions must balance within the shard.
+This is enforced by a LogUp argument (proved via GKR) inside the shard proof.
+\item \textbf{Global} interactions need not balance within a single shard.
+Instead, each shard computes its net contribution $\sigma\in E(\mathbb{F})$, a point on a
+degree-7 elliptic curve over the base field (the ``septic curve''), and outputs it
+as a public value.
+The contributions are accumulated across all shards during recursion, and the final
+completeness check asserts $\sum_i \sigma_i = \mathcal{O}$ (the identity point).
+\end{itemize}
+
+Each shard proof attests to the relation
+$$
+\relation_{\mathrm{shard}}^{(C)} \;=\; \left\{
+\left((\mathsf{pv},\sigma);\; \mathsf{trace}\right) \;\Bigg|\;
+\begin{array}{c}
+\text{All chip constraints in cluster $C$ are satisfied}\\
+\text{All local-scope bus interactions balance (via LogUp)}\\
+\sigma \text{ is the correct global cumulative sum for the global-scope interactions}\\
+\text{Public values $\mathsf{pv}$ are consistent with the trace}
+\end{array}
+\right\}
+$$
+where $C$ is the chip cluster determining the circuit, $\mathsf{pv}$ are the shard's public values
+(boundary state, digests, etc.), and $\sigma$ is the shard's global cumulative sum.
+
+The clusters are of 4 types:
+
+\begin{enumerate}
+\item \textbf{Base core cluster} (\texttt{core}).
+Contains all RISC-V instruction chips (ALU, memory load/store, control flow, etc.)
+together with infrastructure chips: \texttt{Program} (instruction lookup),
+\texttt{ByteLookup} and \texttt{RangeLookup} (preprocessed lookup tables),
+\texttt{MemoryLocal} (local memory state),
+\texttt{MemoryBump} and \texttt{StateBump} (timestamp management),
+\texttt{SyscallCore}, \texttt{SyscallInstrs} (syscall dispatch),
+and \texttt{Global} (global bus accumulator).
+
+\item \textbf{Extended core clusters} (\texttt{core+}$P$).
+Some precompiles are compact enough to be retained in the core cluster,
+avoiding the overhead of a separate shard proof and allowing communication
+with their calling context via the local lookup argument.
+The retainable extensions are:
+\texttt{MemoryGlobalInit}/\texttt{MemoryGlobalFinal},
+\texttt{Bls12381Fp}, \texttt{Bn254Fp},
+\texttt{Sha256\{Extend,Compress\}} (with their control chips),
+\texttt{Uint256Ops}, and \texttt{Poseidon2}.
+Extended clusters are generated for subsets of size 0, 1, or all of these extensions,
+plus one additional combination (\texttt{core} + memory global + SHA-256 + \texttt{Uint256Ops}).
+
+\item \textbf{Deferred precompile clusters} (\texttt{precompile-}$P$).
+Precompiles with high arithmetization costs (in terms of number of columns
+in the arithmetization) are proved in their own shards. Each such cluster contains
+the precompile-specific chip(s) together with a base set of infrastructure chips:
+\texttt{Program}, \texttt{ByteLookup}, \texttt{RangeLookup},
+\texttt{SyscallPrecompile}, \texttt{MemoryLocal}, and \texttt{Global}.
+They communicate with their RISC-V calling context
+via the global lookup argument.
+The deferred precompiles include:
+elliptic curve operations (Ed25519, Secp256k1, Secp256r1, BN-254, BLS12-381 point add/double),
+field arithmetic (BLS12-381 and BN-254 $\mathbb{F}_p$/$\mathbb{F}_{p^2}$ operations),
+hash functions (Keccak permutation, SHA-256, Poseidon2),
+and big-integer arithmetic (\texttt{Uint256Mul}, \texttt{Uint256Ops}).
+
+\item \textbf{Memory boundary cluster} (\texttt{mem-boundary}).
+The global memory argument requires initialization and
+finalization: sending the initial memory state into the global bus and receiving the final memory state
+from the global bus.
+This cluster contains \texttt{MemoryGlobalInit}, \texttt{MemoryGlobalFinal},
+\texttt{Global}, and the preprocessed chips.
+Note that when memory initialization/finalization is retained into an extended core cluster (type~2),
+this standalone cluster is not needed (this happens for very small programs so that the proof can
+fit into one shard).
+\end{enumerate}
+
+
+
+
 
 \subsection{ \texttt{segment} circuit}
 
