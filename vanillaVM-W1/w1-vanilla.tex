@@ -15,11 +15,10 @@
 \usepackage[most]{tcolorbox}
 
 \title{A Vanilla zkVM Architecture}
-\author{George Kadianakis\quad Dmitry Khovratovich\quad Benedikt Wagner\quad Arantxa Zapico\\[8pt]
-{\normalsize Ethereum Foundation Cryptography Research}}
+\author{Succinct Labs\\[8pt]}
 
 \input{macros.tex}
-\date{8 April 2026}
+\date{\today}
 \begin{document}
 
 \maketitle
@@ -874,5 +873,111 @@ from proving a relation to a low-degree test with
   FRI or another protocol. The reductions should contain links to the circuits submitted to soundcalc.
   The purpose of the section is to make explicit how the relations from the previous section are proven.
 \end{instruction}
+
+In the previous sections, we have described how to arithmetize the correct RISC-V execution of a program
+by decomposing it into a collection of tables of field elements, each of which has algebraic constraints
+placed on its columns.
+Furthermore, we allow tables to ``send'' and ``receive'' messages with multiplicity through a collection of ``interaction kinds''.
+All tables are zero padded to have the same height, call it $\mathcal{N}_{row}= 2^{n_{row}}$.
+For the RISC-V circuits, we use $n_{row}=22$.
+The reason for this padding is that it allows for the verifier to be described as a uniform arithmetic
+circuit, independent of the unpadded table heights.
+This naturally introduces some prover and verifier overhead; naively, this can be a very large overhead
+if one of the tables is wide and short, in which case the padding adds a substantial number of trace cells,
+but the Hypercube proof system has a number of mitigations to minimize this overhead.
+We will describe some of these mitigations below, especially because one of them is a cryptographic
+protocol invented for this particular zkVM context.
+First, though, let us describe protocol as if it were actually run on the padded tables:
+
+\begin{enumerate}
+\item Treat each column of each table as a multilinear polynomial in $n_{row}$ variables. Use a batch
+multilinear polynomial commitment scheme to commit to these polynomials. Let $W$ denote the total
+number of columns/multilinear polynomials.
+\item Use GKR with $n_{row}$ {\color{red} maybe $\pm 1$} rounds to prove the LogUp argument equating the ``send'' and ``receive'' multisets across
+all tables. The output of GKR is a collection of $W$ evaluation claims, one on each column, all at
+the same point $\eta$.
+\item Use the point $\eta$ as the randomness for the zerocheck sumcheck which proves constraint satisfaction.
+Batch the zerocheck sumcheck with the sumchecks which ``prove'' the evaluation claims from LogUp+GKR
+(more precisely, the sumchecks
+reduce evaluation claims at one point to evaluation claims at another).
+The output of this batched sumcheck is again a collection of $W$ evaluation claims, not at a new point
+$\eta'$.
+\item Use the batch multilinear polynomial commitment scheme to prove these evaluation claims.
+\end{enumerate}
+
+If the prover actually materialized the full $W\times \mathcal{N}_{row}$ trace, this would be an
+enormous quantity of data.
+For example $W\approx 2^{12}$ is in the mid-range of column counts among various ``table clusters'' used
+in SP1.
+For a 32-bit field such as KoalaBear, this translates into a total of $4\times W\times \mathcal{N}_{row} = 2^{36}$
+bytes, or 64 GB.
+This is twice the global VRAM of an Nvidia 5090 GPU.
+Clearly, keeping around the padding is not feasible.
+In order to mitigate these costs, the SP1 proof system uses the following techniques:
+\begin{enumerate}
+\item Instead of using a batch multilinear PCS directly, we use the jagged polynomial commitment scheme, which
+is a sparse PCS designed for exactly the kind of sparsity inherent in the table layout as described above.
+This enables the prover and verifier PCS costs to depend only on the size of the unpadded data
+(and notably, the verifier PCS costs can be made independent of $W$). For the internal dense PCS,
+we use batch BaseFold, which we view as a multilinear PCS for committing to a single multilinear
+in \texttt{log\_total\_unpadded\_trace\_area} variables.
+The evaluation proof for a point $\eta = \eta_n || \eta_k$ consists of
+\item For the sumchecks, the contributions of the padding rows are always easy to compute and don't
+scale with the amount of padding. The prover makes frequent use of this fact.
+\end{enumerate}
+
+\textbf{Important Note: } The Hypercube proof system verifier can be described as an arithmetic circuit.
+The circuit is determined by the total trace area of the unpadded data, and the tables included in the
+segment.
+Notably, the circuit is \emph{independent} of the individual tables' unpadded heights.
+Hence, the total number of verifier circuits can be easily limited to the $\approx 2^{18}$ range,
+which makes it feasible to build them all instead of using a VM for recursion.
+
+In the following subsections, we describe each section of the protocol in a bit more detail,
+with an eye towards making the soundness analysis in soundcalc more transparent. Whenever a variable
+appears in \texttt{typewriter font}, it refers to a parameter in the ``sp1.toml'' file in the soundcalc
+repository.
+
+\subsection{LogUp + GKR Details}
+{\color{red} TODO: Ask Min about the LogUp+GKR business.}
+
+\subsection{Zerocheck Details}
+Recall that we have a trace of height $\mathcal{N}_{row}$ and width $W$ on which we place \texttt{num\_constraints}
+algebraic constraints, denoted $C_0, C_1, \ldots, C_{num\_constraints}$.
+Each $C_i$ is a polynomial of total degree at most $3$ in $W$ variables, though almost always it depends trivially on most of the variables.
+It is useful also to write $W= w_1+ \ldots + w_k$, where $k$ is the number of tables in the cluster,
+and to group the constraints by table, so that $C_{i,j}$ refers to the $j$-th constraint on the $i$-th
+table.
+Let us write $c_i$ for the number of constraints in the $i$-th table, and $p_{i,\ell}$ for the
+$\ell$-th column of the $i$-th table.
+Finally, let us write $h_i$ for the height of the $i$-th table (not including padding).
+The claim for our zerocheck is that, $\forall x\in \{0,1\}^{n_{row}}, \quad i\in [k], \quad j\in [c_i]$:
+
+\begin{equation}
+C_{i,j}(p_{i,1}[x], \ldots, p_{i,w_i}[x]) = \left\{ \begin{array}{lr}
+0, &x< h_i,\\
+C(0,\ldots, 0), & x\geq h_i
+\end{array}
+\quad \right.
+\end{equation}
+Note that the constraint evaluation on zero-padding may not result in 0, so at the moment our protocol
+does not match exactly with the usual zerocheck.
+However, note the following. If $\mathrm{geq}_{h_i}(x)$ is the function which, for $x\in \{0,1\}^{n_{row}}$,
+is zero if $x<h_i$ and 1 if $x\geq h_i$, then its multilinear extension $\widehat{\mathrm{geq}}_{h_i}(z)$
+is relatively straightforward to evaluate at arbitrary $z\in \mathbb{F}^{n_{row}}$, using the following
+recursion relation. Write $z = (z_0, z_{rest})\in \mathbb{F}\times \mathbb{F}^{n_{row}-1}$, and write $h_i = h_{i,0} * 2^{n_{row}-1} + h_{i, rest}$.
+Then, we have:
+\[
+\widehat{\mathrm{geq}}_{h_i}(z) = z_0\cdot(1-h_{i,0}) + \widehat{\mathrm{eq}}(z_0, h_{i,0})\cdot \widehat{\mathrm{geq}}_{h_{i,rest}}(z_{rest})
+\]
+
+
+To prove this, first, we sample a random $\zeta \in \mathbb{F}^{n_{row}}$, $\lambda\in \mathbb{F}, \alpha \in \mathbb{F}$,
+and turn this collection of claims into the single sumcheck claim:
+
+\begin{equation}
+\sum_{i=0}^{k-1}\sum_{j=0}^{c_i-1} \lambda^i\alpha^j \widehat{\mathrm{geq}}_{h_i}(\zeta)=\sum_{x\in \{0,1\}^{n_{row}}} \widehat{\mathrm{eq}}_\zeta(x)\sum_{i=0}^{k-1} \lambda^i\sum_{j=0}^{c_i-1} \alpha^j C_{i,j}(p_{i,1}[x], \ldots, p_{i,w_i}[x])
+\end{equation}
+
 
 \end{document}
