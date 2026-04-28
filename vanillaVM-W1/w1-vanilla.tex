@@ -7,6 +7,7 @@
 \usepackage{xcolor}
 \geometry{margin=1in}
 \usepackage{tikz}
+\usetikzlibrary{decorations.pathreplacing}
 \usepackage{tikz-cd}
 \usepackage{pgfplots}
 \usepackage[binary-units=true]{siunitx}
@@ -14,7 +15,7 @@
 \usepackage[font=small]{caption}
 \usepackage[most]{tcolorbox}
 
-\title{A Vanilla zkVM Architecture}
+\title{SP1 zkVM Architecture}
 \author{Succinct Labs\\[8pt]}
 
 \input{macros.tex}
@@ -23,40 +24,43 @@
 
 \maketitle
 
-\begin{instruction}
-This document is a reference example illustrating the expected scope and level of rigor. It is not meant to describe a zkVM that is implementable and efficient, and the described zkVM may not even be sound. Submitted documents should provide additional detail where applicable.
-\end{instruction}
-
 \section*{Overview}
 
-This document describes a sample \emph{vanilla zkVM} architecture designed according to the W1 deliverable of the EF zkVM whitepaper guidelines\footnote{\url{https://zkevm.ethereum.foundation/blog/cryptography-research-update}}.
-The architecture proves execution of a fixed RV+ (extended RISC-V) guest program using:
+This document describes the architecture of the \textbf{SP1 zkVM}
+according to the W1 deliverable of the EF zkVM whitepaper
+guidelines\footnote{\url{https://zkevm.ethereum.foundation/blog/cryptography-research-update}}.
+SP1 proves execution of RISC-V guest programs using:
 
 \begin{itemize}
-\item Segmented execution traces
-\item Specialized constraint systems (``chips'')
-\item A system of interaction buses
-\item LogUp arguments for buses consistency
-\item WHIR-based STARK proofs
-\item Recursive aggregation of segment proofs
+\item Execution of RV64IM programs compiled from ELF binaries
+\item Sharded execution traces with chip-cluster--based segmentation
+\item Specialized constraint systems (``chips'') grouped into clusters
+\item Local bus interactions (LogUp + GKR) within each shard
+\item Global bus interactions across shards (septic curve accumulation)
+\item Hypercube proof system with BaseFold polynomial commitments over the KoalaBear field
+\item Recursive aggregation via normalize / compose / shrink circuits
 \end{itemize}
 
-After execution, the trace is divided into segments. Each segment is proven by four inner circuits tied together by a shared bus, whose proofs are verified by a single segment circuit. Segment proofs are then recursively aggregated in a binary tree until a single proof attests to correctness of the entire program execution.
+After execution, the trace is partitioned into \emph{shards}, each corresponding to a chip cluster instance.
+Every shard is proven independently, producing a core shard proof.
+These proofs are then normalized to a fixed shape and recursively aggregated until a single proof attests to the correctness of the entire program execution.
 
 \section{Execution Model}
 We define how a program is executed.
 
 \subsection{Program, Execution, and VM State}
 
-A \textbf{program} $\PPP$ is a fixed RV+ binary, compiled from an Ethereum State Transition function.
-Its inputs $\III$ are derived from the Ethereum state (\emph{initial state}), and
-the execution witness $\WWW$,
+A \textbf{program} $\PPP$ is a RISC-V ELF binary targeting the RV64IM
+instruction set (64-bit base integer with multiply/divide extension).
+Its inputs $\III$ are derived from the Ethereum state (\emph{initial state})
+and the execution witness $\WWW$,
 and its outputs $\OOO$ are the final Ethereum state (\emph{final state}).
 
-The program $\PPP$ operates on the \textbf{VM state} $S$, defined as concatenation of the following components:
+The program $\PPP$ operates on the \textbf{VM state} $S$, defined as:
 \begin{itemize}
-\item $\pc$: 32-bit program counter
-\item $\regs[0..k-1]$: list of $k$ 32-bit register values
+\item $\pc$: 64-bit program counter
+\item $\regs[0..31]$: 32 general-purpose registers (x0--x31), each 64 bits wide,
+      with x0 hardwired to zero
 \item $\mem[]$: byte-addressed writable memory
 \end{itemize}
 We separately denote the code of the program by $\code$. It is immutable and read-only, and is not part of the VM state.
@@ -96,43 +100,44 @@ S_T:=(\pc_T,\regs',\mem')\text{ where $\regs',\mem'$ are derived from }\EE';\\
 $$
 
 \subsection{Supported Instructions}
-The zkVM supports the RV+ instruction set, which is an extension of the RV32IM instruction set.
-Concretely, all operations:
-\begin{itemize}
-    \item conform to the state transition \eqref{eq:op}, i.e.
-    transform $(\pc_1,\regs_1,\mem_1)$ to $(\pc_2,\regs_2,\mem_2)$ according to the semantics of the instruction $\op$ retrieved from $\code$ at the program counter $\pc_1$.
-    \item are all standard RISC-V instructions\footnote{\url{https://riscv.org/technical/specifications/}} (executed according to the standard RISC-V semantics)
-     or additional
-    instructions (precompiles) for efficient execution of certain operations --- concretely,
-    Keccak and Poseidon.
-\end{itemize}
-For our purpose the exact semantics of the instructions is not important,
-and we treat them as black boxes with their own predicates modeling the correctness of the execution.
+SP1 supports the full RV64IM instruction
+set\footnote{\url{https://riscv.org/technical/specifications/}}:
+the base 64-bit integer instructions (I) and the integer
+multiply/divide extension (M).
+Additionally, SP1 provides \emph{precompiles}---accelerated
+implementations of expensive operations---invoked via the RISC-V
+\texttt{ecall} instruction with a syscall code in register \texttt{t0}.
 
-Concretely, for given instruction $op$, the predicate $\varphi_{op}$  has the semantics
+The precompiles include:
+\begin{itemize}
+\item \textbf{Hash functions:} SHA-256 (extend + compress), Keccak-256
+  permutation, Poseidon2.
+\item \textbf{Elliptic curve operations:} point addition, doubling, and
+  decompression for Ed25519, Secp256k1, Secp256r1, BN-254, and
+  BLS12-381.
+\item \textbf{Field arithmetic:} $\mathbb{F}_p$ and $\mathbb{F}_{p^2}$
+  add/sub/mul for BN-254 and BLS12-381.
+\item \textbf{Big-integer arithmetic:} 256-bit multiply, 256-bit
+  add/multiply with carry, $256\times 2048$-bit multiply.
+\item \textbf{System:} halt, I/O (write, hint read/len), commit,
+  deferred proof verification, memory protection.
+\end{itemize}
+
+For our purpose the exact semantics of each instruction is not
+important; we treat them as black boxes with predicates modeling
+correctness.
+For a given instruction $\op$, the predicate $\varphi_{\op}$ has the
+semantics
 \begin{multline}\label{eq:phiop}
 \varphi_{op}(\pc_1,\regs_1,\mem_1,\pc_2,\regs_2,\mem_2)=\mathrm{TRUE} \;\Longleftrightarrow\;\\
  (\pc_1,\regs_1,\mem_1)\xrightarrow{\op} (\pc_2,\regs_2,\mem_2) \wedge \code[\pc_1]=op
 \end{multline}
 
-For instance, if $op$ is an ADD instruction, then $\mem_1=\mem_2$, $\pc_1+1=\pc_2$ and the registers change according to the ADD instruction.
-
-
- Exceptions are memory operations,
-which we assume have the following syntax and semantics:
-\begin{align}\label{eq:mem-ops}
-\rea &:\;(\regs_1:=(addr,*,\ldots),\mem)\rightarrow (\regs_2:=(addr,x,\ldots),\mem):&\quad \mem[addr]&=x,\\
-\writ &:\;(\regs_1:=(addr,x,\ldots),\mem)\rightarrow (\regs_2:=(addr,x,\ldots),\mem'):&\quad \mem'[i]&=\begin{cases}
-x & \text{if }i=addr,\\
-\mem[i] & \text{otherwise}.
-\end{cases}
-\end{align}
-
 
 \section{Segmentation}
-We now explain how execution is split into segments.
+We now explain how execution is split into shards.
 
-\subsection{Execution Segments}
+\subsection{Execution Shards}
 
 \begin{figure}
 \centering
@@ -256,52 +261,55 @@ We now explain how execution is split into segments.
 \caption{Segmentation of the execution trace into 3 segments }\label{img:trace-seg}
 \end{figure}
 
-After execution, the execution trace $\TTT$ is divided into segments $\GGG_1,\GGG_2,\ldots,\GGG_m$
-of exactly $N_{\text{seg}}$ instructions\footnote{The instruction
-set has a no-op instruction to pad the segment to the full length.
-The parameter $N_{\text{seg}}$ is assumed to be hardcoded and fixed, and known to the verifier.} each (cf. Fig. \ref{img:trace-seg}). Each segment $\GGG_i$ corresponds to a contiguous
-subsequence of the execution trace, from $S_{start_i}$ to $S_{end_i}$, and is proven by a set of separate
-proofs.
-The segmentation of the execution trace into consecutive segments
-allows reducing the proof of the entire execution to proving the validity of each segment
-and consistency between them. The global consistency argument asserts that the segments are consistent with each other
-and with the public inputs/outputs:
+After execution, the execution trace $\TTT$ is divided into
+\emph{shards} $\GGG_1,\GGG_2,\ldots,\GGG_m$
+(cf.\ Fig.~\ref{img:trace-seg}).
+Shards are not fixed-size; instead, the executor splits the trace when
+the estimated trace area of the current shard exceeds a
+configurable threshold\footnote{The default element threshold is
+$2^{28}+2^{27}$, and the maximum table height per shard is $2^{22}$.}.
+Each shard $\GGG_i$ corresponds to a contiguous subsequence of the
+execution trace, from $S_{\mathrm{start}_i}$ to $S_{\mathrm{end}_i}$,
+and is proven by its own core shard proof.
+
+Sharding reduces the proof of the entire execution to proving the
+validity of each shard and consistency between them.
+The global consistency argument (enforced during recursive aggregation)
+asserts:
 $$
-S_{end_i} = S_{start_{i+1}}\text{ for all }i\in[m-1],\quad S_{start_1}=S_0,\quad S_{end_m}=S_T.
+S_{\mathrm{end}_i} = S_{\mathrm{start}_{i+1}}\text{ for all }i\in[m-1],\quad S_{\mathrm{start}_1}=S_0,\quad S_{\mathrm{end}_m}=S_T.
 $$
 
-\subsection{Segment layout}
+\subsection{Shard layout}
 
-Each segment is represented in an equivalent form as a collection of one trace and several
-\emph{chips}, listed below (cf.\ Fig.~\ref{img:segments}).
+Each shard is proven by a \emph{chip cluster}---a collection of
+chips (specialized constraint systems) that are included together in a
+single proof.
+The cluster determines which chips are present and thus the circuit
+shape.
+Within a shard, each chip produces a table of field elements
+with algebraic constraints on its columns.
+The full list of chip cluster types and their contents is given in
+Section~\ref{sec:core}.
 
+At a high level, every shard includes:
+\begin{itemize}
+\item An \textbf{execution trace chip} containing the RISC-V
+  instruction steps, register accesses, and control flow for the
+  shard's portion of execution.
+\item \textbf{Precompile chips} for any accelerated operations invoked
+  during the shard (e.g., SHA-256, Keccak, elliptic curve operations).
+  Depending on cost, a precompile may be included in the same cluster
+  as the execution trace or deferred to its own shard
+  (Section~\ref{sec:core}).
+\item \textbf{Infrastructure chips} for lookups (byte, range),
+  memory state, timestamp management, syscall dispatch, and the global
+  bus accumulator.
+\end{itemize}
 
-\paragraph{Segment trace}
-It consists of all  operations of the execution trace within
-the segment and state variables, including the program counter, register values, memory state, etc.
-It is a collection of $N_{\text{seg}}$ rows, each corresponding to one instruction step
-from the segment. The segment trace does not enforce the semantics of all instructions,
-but only a subset of them, and the rest of the instructions are proven
-in separate chips  and their consistency with the segment trace is enforced by
-\emph{consistency arguments}.
-
-\paragraph{Keccak chip}  It consists of all Keccak precompile calls in the segment, and their inputs/outputs.
-
-\paragraph{Poseidon chip}
-It consists of all Poseidon precompile calls in the segment, and their inputs/outputs.
-
-\paragraph{Range check chip}
-It consists of all range check statements occurring in the segment.
-
-\paragraph{Local consistency argument}$\phantom{=}$
-
-\begin{instruction}
-  Teams should describe how their bus consistency argument works in terms of lookups used and how they integrate into the overall proof system.
-\end{instruction}
-
-The consistency arguments enforce that the operations proven in the chips are consistent
-with the segment trace. This is done using the concept of a \emph{bus} connecting the segment trace and the chips,
-and lookup arguments to enforce consistency of the bus values with the segment trace and the chip traces.
+Consistency between chips within a shard is enforced by a \emph{bus}:
+a LogUp interaction argument (proved via GKR) that checks that all
+``send'' and ``receive'' messages across chips balance within the shard.
 
 \begin{figure}
 \centering
@@ -405,227 +413,183 @@ In this section, we define via predicates what it means that a program is correc
 
 \subsection{Predicates for individual operations}
 
-\begin{instruction}
-Teams should list all operations supported by their zkVM and define the corresponding predicates based on their architecture.
-\end{instruction}
-
 Each operation is treated as a black box with its
-own predicate $\varphi_{op}$ (cf. ~\eqref{eq:phiop}).
+own predicate $\varphi_{\op}$ (cf.~\eqref{eq:phiop}).
 Throughout this section, subscripts $1$ and $2$ denote states before and after an operation.
-We also denote $S_1:=(\pc_1,\regs_1,\mem_1)$ and
-$S_2:=(\pc_2,\regs_2,\mem_2)$ as the states
+We write $S_1:=(\pc_1,\regs_1,\mem_1)$ and
+$S_2:=(\pc_2,\regs_2,\mem_2)$ for the states
 before and after the operation.
 
 We group operations as follows:
 \begin{itemize}
-	\item \textbf{Memory operations.}
-	Read: $\pred{read}(S_1,S_2)$ --- does not modify memory.
-	Write: $\pred{write}(S_1,S_2)$ --- may modify memory.
-	\item \textbf{Precompiles.}
-	Keccak: $\pred{keccak}(S_1,S_2)$.
-	Poseidon: $\pred{poseidon}(S_1,S_2)$.
-	 \item \textbf{Arithmetic without range checks.} $\op_1,\ldots,\op_{10}$
-	 with predicates $
-   \pred{\op_i}(S_1,S_2)$.
-	 \item \textbf{Arithmetic with range checks.} $\op_{11},\ldots,\op_{20}$
-	 with predicates $\pred{\op_i}(S_1,S_2)$, each decomposable as
-	 $\pred{\op_i}'(S_1,S_2)\wedge \pred{range}(S_1)$
-	 where the constants defining the range check are always in the
-   last two registers.
+\item \textbf{ALU operations.}
+  Integer arithmetic (ADD, SUB, MUL, DIV, REM, and their variants),
+  bitwise operations (AND, OR, XOR), shifts (SLL, SRL, SRA),
+  and comparisons (SLT, SLTU).
+  Each has a predicate $\pred{\op}(S_1,S_2)$.
+\item \textbf{Memory operations.}
+  Loads (LB, LH, LW, LD and unsigned variants) and
+  stores (SB, SH, SW, SD).
+  Load: $\pred{load}(S_1,S_2)$ --- reads memory into a register.
+  Store: $\pred{store}(S_1,S_2)$ --- writes a register value to memory.
+\item \textbf{Control flow.}
+  Branches (BEQ, BNE, BLT, BGE, BLTU, BGEU), jumps (JAL, JALR),
+  and upper-immediate (LUI, AUIPC).
+\item \textbf{Precompiles.}
+  Invoked via \texttt{ecall}; each precompile $P$ has a predicate
+  $\pred{P}(S_1,S_2)$ covering all state changes
+  (register and memory) produced by the syscall.
 \end{itemize}
-All operations except $\rea$ and $\writ$  do not read or write memory,
-  so we may omit these arguments from their predicates in
-   the future text for brevity.
+
 \subsection{Correct execution of a single step}
 
-\begin{instruction}
-Teams should define the step predicate for their architecture, specifying how the correct operation is selected and verified at each step.
-\end{instruction}
-
 A single step executes the instruction at the current program counter.
-The step predicate selects the matching operation via a disjunction over all opcodes:
+The step predicate selects the matching operation via a disjunction
+over all opcodes:
 \begin{equation*}\label{eq:step}
-\varphi_{step}(S_1,S_2):=
-\bigvee_{op\in \text{operations}} \varphi_{op}(S_1,S_2)
+\varphi_{\step}(S_1,S_2):=
+\bigvee_{\op\in \text{operations}} \varphi_{\op}(S_1,S_2)
 \end{equation*}
-where $S_1:=(\pc_1,\regs_1,\mem_1)$ and $S_2:=(\pc_2,\regs_2,\mem_2)$ are the states before and after the step.
+where $S_1$ and $S_2$ are the states before and after the step.
 
-\subsection{Delegating expensive operations using a Bus}
+\subsection{Chip interactions and the bus}\label{sec:bus}
 
-\begin{instruction}
-Teams should describe how expensive operations (e.g., precompiles, range checks) are delegated to a bus or similar mechanism in their architecture.
-\end{instruction}
+Within a shard, chips communicate through a \emph{bus}: a collection of
+typed messages that chips \emph{send} (produce) and \emph{receive}
+(consume).
+For example, when the execution trace chip encounters a precompile
+call, it sends the call's inputs to the bus; the corresponding
+precompile chip receives those inputs, performs the computation,
+and sends the results back.
+Consistency is enforced by requiring that, for each interaction kind,
+the multiset of sent messages equals the multiset of received messages.
 
-Range checks and precompile calls are expensive to prove inline.
-Instead, we collect them in a shared \emph{bus} $\BBB$
-and verify separately, proving the consistency along the way.
-The \emph{bus} $\BBB$ is a collection of  all
-precompile calls and range checks within a segment. That is, it has the following structure:
-$$
-\BBB=\{(\underbrace{\op^{(i)}}_{\in\{\keccak,\poseidon\}},
-S_1^{(i)},S_2^{(i)})\}_{i=1}^{b}\;\cup\;
-\{(\range,S^{(j)} )\}_{j=1}^{r}
-$$
-where $b$ is the number of precompile calls and $r$ is the number of range checks.
+SP1 implements this via a \textbf{LogUp argument} (proved via GKR):
+each chip contributes terms $+1/(\alpha - m_i)$ for sends and
+$-1/(\alpha - m_j)$ for receives, where $\alpha$ is a random
+challenge and $m_i, m_j$ are message fingerprints.
+The sum must equal zero, which holds if and only if sends and receives
+match as multisets.
 
-
-Now we define auxiliary predicates that filter the bus by operation type
-and assert correctness of each entry:
-$\pred{\keccak}(\BBB)$ checks all Keccak entries,
-$\pred{\poseidon}(\BBB)$ checks all Poseidon entries,
-and $\pred{\range}(\BBB)$ checks all range-check entries.
-Concretely:
-\begin{align*}
-\pred{\keccak}(\BBB)&:=
-\bigwedge_{( \keccak,S_1,S_2)\in\BBB}
-\pred{keccak}(S_1,S_2)\\
-\pred{\poseidon}(\BBB)&:=
-\bigwedge_{( \poseidon,S_1,S_2)\in\BBB}
-\pred{poseidon}(S_1,S_2)\\
-\pred{\range}(\BBB)&:=
-\bigwedge_{( \range,S)\in\BBB}
-\pred{\range}(S)
-\end{align*}
-
-We now rewrite the step predicate \eqref{eq:step} to separate
-inline verification from bus-deferred verification.
-The new form is equivalent\footnote{Formally the new predicate is even stronger
-as it also asserts the correctness of the operations in $\BBB$ not listed
-in the segment.
- We omit checking for such operations for efficiency.}:
-\begin{equation}\label{eq:step-expanded}
-  \pred{step}(S_1,S_2,\BBB):=
-\pred{step,bus}(S_1,S_2,\BBB)
-\wedge \pred{\keccak}(\BBB)\wedge \pred{\poseidon}(\BBB) \wedge \pred{\range}(\BBB)
-\end{equation}
-where
-\begin{multline}
-	\pred{step,bus}(S_1,S_2,\BBB):=
-\bigvee_{op\in \{\rea,\writ,\op_1, \ldots,\op_{10}\}}
-\left(\pred{op}(S_1,S_2)
-\right)\\
-\bigvee_{op\in \{\op_{11}, \ldots,\op_{20}\}}
- \left(\pred{op}'(S_1,S_2)
-\wedge (\range,S_1)\in\BBB\right)\\
-\bigvee_{op\in \{\text{Keccak},\text{Poseidon}\}} \left((op,S_1,S_2)\in\BBB\right)
-\end{multline}
-Recall that $S_1:=(\pc_1,\regs_1,\mem_1)$ and $S_2:=(\pc_2,\regs_2,\mem_2)$.
-The predicate $\pred{step,bus}$ separates operations into three categories:
+Each interaction is declared with one of two \emph{scopes}:
 \begin{itemize}
-\item \textbf{Memory ops and arithmetic without range checks} ($\rea,\writ,\op_1,\ldots,\op_{10}$) are verified inline via their predicates.
-\item \textbf{Arithmetic with range checks} ($\op_{11},\ldots,\op_{20}$): the arithmetic logic $\pred{op}$ is verified inline, but the range check is deferred by recording $(\range,S_1)$ in~$\BBB$.
-\item \textbf{Precompiles} (Keccak, Poseidon) are fully deferred --- the step only checks that the call appears in~$\BBB$, while correctness will be verified by $\pred{\keccak}(\BBB)$, $\pred{\poseidon}(\BBB)$ in~\eqref{eq:step-expanded}.
+\item \textbf{Local} interactions must balance within the shard.
+This is enforced by the LogUp + GKR argument inside the shard proof.
+\item \textbf{Global} interactions need not balance within a single
+shard.
+Instead, each shard computes its net contribution
+$\sigma\in E(\mathbb{F})$, a point on a
+degree-7 elliptic curve over the base field (the ``septic curve''),
+and outputs it as a public value.
+The contributions are accumulated across all shards during recursion,
+and the final completeness check asserts
+$\sum_i \sigma_i = \mathcal{O}$ (the identity point).
 \end{itemize}
-\subsection{Committed memory}
 
-\begin{instruction}
-Teams should describe how memory is committed
-and how memory operations are verified in their architecture.
-\end{instruction}
+The global scope is used for interactions that cross shard boundaries,
+most notably memory consistency and precompile delegation to separate
+shards.
 
-The full memory state is too large to pass around directly,
-so we replace it with the Merkle tree commitment $\Com$.
-We define a \emph{state with committed memory} $\hat{S}:=(\pc,\regs,\Com)$,
-replacing the full memory in $S:=(\pc,\regs,\mem)$ with its commitment.
+\subsection{Memory consistency}\label{sec:memory}
 
-The read operation predicate becomes
-$$\widehat{\pred{}}_{\rea}(\pc_1,\regs_1,\Com_1,\pc_2,\regs_2,\Com_2)$$
-with $\Com_1=\Com_2$, and the write operation predicate becomes
-$$\widehat{\pred{}}_{\writ}(\pc_1,\regs_1,\Com_1,\pc_2,\regs_2,
-\Com_2)$$
-with additional semantics that
-the read and write operations are consistent with the commitments.
+SP1 does \emph{not} use Merkle tree commitments for memory.
+Instead, memory consistency is enforced entirely through the global bus.
 
+At the beginning of execution, a dedicated
+\texttt{MemoryGlobalInit} chip sends each initial memory cell
+$(addr, value, timestamp)$ into the global bus.
+At the end of execution, a \texttt{MemoryGlobalFinal} chip receives
+the final memory state from the global bus.
+During execution, every load and store instruction interacts with the
+bus: a load receives the current value at the given address
+and sends an updated timestamp; a store receives the old value
+and sends the new value with an updated timestamp.
 
+Because these are global-scope interactions, they accumulate across
+shards via the septic curve.
+The final completeness check ($\sigma = \mathcal{O}$) ensures that
+every memory cell written is eventually read with the correct value,
+and that the initial and final memory states are consistent with the
+full execution.
 
-Replacing memory with commitments in \eqref{eq:step-expanded}
- gives the step relation:
-\begin{equation}\label{eq:step-bus2}
-  \widehat{\pred{}}_{step}(\hat{S}_1,\hat{S}_2,\widehat{\BBB})
- :=\widehat{\pred{}}_{step,bus}(\hat{S}_1,\hat{S}_2,\widehat{\BBB})
-\wedge  \widehat{\pred{}}_{\keccak}(\widehat{\BBB})\wedge \widehat{\pred{}}_{\poseidon}(\widehat{\BBB}) \wedge \widehat{\pred{}}_{\range}(\widehat{\BBB})
-\end{equation}
-where $\widehat{\BBB}$ replaces the memory entries with
-committed memory (which is practically invisible as
-the bus operations do not use memory), $\widehat{\pred{}}_{\keccak}$, $\widehat{\pred{}}_{\poseidon}$,
- $\widehat{\pred{}}_{\range}$ are essentially unchanged as those relations
- do not use memory, and $\widehat{\pred{}}_{step,bus}$ are
-defined analogously to $\pred{step,bus}$
-but with all operation predicates replaced
-by their committed-memory versions:
-\begin{multline}
-	\widehat{\pred{}}_{step,bus}(\hat{S}_1,\hat{S}_2,\widehat{\BBB}):=
-\bigvee_{op\in \{\rea,\writ,\op_1,\op_2,\ldots,\op_{10}\}}
-\left(\widehat{\pred{}}_{op}(\hat{S}_1,\hat{S}_2)
-\right)\\
-\bigvee_{op\in \{\op_{11},\op_{12},\ldots,\op_{20}\}}
- \left(\widehat{\pred{}}_{op}'(\hat{S}_1,\hat{S}_2)
-\wedge (\range,\hat{S}_1)\in\widehat{\BBB}\right)\\
-\bigvee_{op\in \{\text{Keccak},\text{Poseidon}\}} \left((op,\hat{S}_1,\hat{S}_2)\in\widehat{\BBB}\right)
-\end{multline}
-
-
-Note that \eqref{eq:step-expanded} and \eqref{eq:step-bus2} are no longer equivalent (in terms of soundness)
-as the second one uses committed memory instead of the actual memory.
+Within a shard, local memory interactions (via the \texttt{MemoryLocal}
+chip) handle the read/write operations that occur entirely within that
+shard, using the local LogUp argument for consistency.
 
 
 
-\section{Proof Architecture}\label{sec:proof-arch}
-We now define relations that are proven using individual SNARKs, and that recursively combine into the final proof.
+\section{Recursion Architecture}\label{sec:proof-arch}
+In the previous two sections, we described how a proof of correct RISC-V execution is produced by
+dividing the computation into shards, arithmetizing shard correctness via constraints and lookups,
+and finally gluing together the shard proofs via a global bus consistency argument.
+The number of shards scales roughly with the cycle count of the execution; to produce constant-size
+proofs it is therefore necessary to introduce some form of recursion or proof aggregation.
+In this section, we describe the approach taken by SP1 to address this problem.
+
+It is useful when discussing recursion to set some terminology
+to avoid the confusion caused by ``the recursive nature of recursion''.
+First, by a \textbf{recursion program} or \textbf{recursion circuit}, we mean a program or arithmetic cirucit that verifies
+one or more SNARK proofs and also optionally checks some aggregation logic.
+SNARK proofs can typically be verified in the circuit model of computation, so the term ``circuit'' here is suitable.
+Given a recursion circuit $\mathcal C$, when we say a $\mathcal C$ proof, we mean a proof of the correct
+execution of $\mathcal C$.
+Often, the inputs to a recursion circuit are $\mathcal{C}'$ proofs for some other circuit $\mathcal C'$;
+we advise the reader to be aware that the term $\mathcal C$ proof refers to the \emph{output} of proving
+$\mathcal C$.
+Finally, given a collection
 
 \subsection{Topology}
 
-The proof pipeline consists of multiple circuit types.
-
-\begin{instruction}
-Teams should add footnotes to each circuit subsection below linking to the corresponding soundcalc entry for that circuit's parameters and security analysis.
-\end{instruction}
-
-Below we expose some aggregate information.
+The recursion proof pipeline consists of multiple circuit types, summarized in the table below.
 
 \begin{center}
 \begin{tabular}{lll}
 \hline
 \textbf{Circuit} & \textbf{Purpose} & \textbf{Relation}\\
 \hline
-\texttt{core} (many shapes) & Core shard proof & $\relation_{\mathrm{shard}}^{(C)}$ \\
+% \texttt{core} (many shapes) & Core shard proof & $\relation_{\mathrm{shard}}^{(C)}$ \\
 \texttt{normalize}          & 1-to-1 shape normalization & $\relation_{\mathrm{norm}}$ \\
 \texttt{compose}            & $N$-to-1 aggregation ($1\!\leq\! N\!\leq\! 4$) & $\relation_{\mathrm{compose}}$ \\
-\texttt{deferred}           & Deferred sub-computation & $\relation_{\mathrm{def}}$ \\
+\texttt{shrink}             & Final proof size reduction & $\relation_{\mathrm{shrink}}$ \\
 \hline
 \end{tabular}
 \end{center}
 
+In more detail:
+
 \begin{itemize}
-\item \texttt{core}:
-Proves the correct execution of one shard (a chip cluster instance).
-The circuit shape varies with the chip cluster type and trace
-dimensions (Sec.~\ref{sec:core}).
+% \item \texttt{core}:
+% Proves the correct execution of one shard.
+% The circuit shape varies with the chip cluster type and trace
+% dimensions (Sec.~\ref{sec:core}).
 \item \texttt{normalize}:
-A 1-to-1 circuit that verifies a single core shard proof and outputs
-a proof of a fixed shape (\texttt{compress\_shape}), irrespective of
-the input shard's shape (Sec.~\ref{sec:normalize}).
+A 1-to-1 circuit that verifies a single core shard proof. A \texttt{normalize} proof
+is always of a fixed shape (which we call \texttt{compress\_shape}), irrespective of
+the input proof's shape (Sec.~\ref{sec:normalize}).
 \item \texttt{compose}:
-An $N$-to-1 recursion circuit ($1\leq N\leq 4$) that aggregates
-\texttt{normalize}, \texttt{compose}, and/or \texttt{deferred} proofs
-into a single proof of \texttt{compress\_shape}
+An $N$-to-1 recursion circuit ($1\leq N\leq 4$) that verifies multiple
+proofs of shape \texttt{compress shape} and performs some aggregation logic.
+A \texttt{compose} proof is always a single proof of shape \texttt{compress\_shape}
 (Sec.~\ref{sec:compose}).
-\item \texttt{deferred}:
-A 1-to-1 circuit that verifies a complete proof of a deferred
-sub-computation and wraps it as a \texttt{compress\_shape} proof
-for inclusion in the \texttt{compose} tree
-(Sec.~\ref{sec:deferred}).
+\item \texttt{shrink}:
+A 1-to-1 circuit that takes the final complete \texttt{compose}
+proof and re-proves it with smaller FRI parameters, reducing
+the proof size in preparation for the outer proof system
+(Sec.~\ref{sec:shrink}).
 \end{itemize}
 
 We visualize the recursion topology in Fig.~\ref{fig:topo}.
-At the leaves, \texttt{core} shard proofs (one per chip cluster
-instance) are each normalized to \texttt{compress\_shape} by a
+At the leaves, \texttt{core} shard proofs are each normalized to \texttt{compress\_shape} by a
 \texttt{normalize} circuit.
-The resulting proofs---together with any \texttt{deferred}
-proofs---are aggregated by a tree of \texttt{compose} circuits
+The resulting proofs are then aggregated by a tree of \texttt{compose} circuits
 (fan-in up to~4).
-The recursion terminates when all proofs have been
-aggregated into a single \texttt{compose} proof.
+We refer to the \texttt{normalize} and \texttt{compose} layers
+collectively as the ``compress'' stage.
+The compress stage terminates when all proofs have been
+aggregated into a single complete \texttt{compose} proof.
+Finally, this proof is passed to the \texttt{shrink} circuit,
+which re-proves it with reduced FRI parameters to minimize
+proof size before conversion to the outer proof system.
 
 \begin{figure}
 \centering
@@ -635,8 +599,7 @@ aggregated into a single \texttt{compose} proof.
   core/.style={box, fill=yellow!20, minimum width=1.0cm},
   norm/.style={box, fill=green!15, minimum width=1.0cm},
   comp/.style={box, fill=blue!12, minimum width=1.2cm},
-  def/.style={box, fill=red!10, minimum width=1.0cm},
-  sub/.style={box, fill=gray!12, minimum width=1.0cm, font=\tiny\sffamily},
+  shrk/.style={box, fill=orange!15, minimum width=1.2cm},
   arr/.style={draw, thin, -stealth},
 ]
 % --- Core shards (row 0) ---
@@ -663,24 +626,26 @@ aggregated into a single \texttt{compose} proof.
 \draw[arr] (n4) -- (p2);
 \draw[arr] (n5) -- (p2);
 \draw[arr] (n6) -- (p2);
-% --- Deferred proof (row 1--2) ---
-\node[sub]  (sp) at (10.5, 0)    {complete\\[-1pt]sub-proof};
-\node[def] (df) at (10.5, 1.15) {deferred};
-\draw[arr] (sp) -- (df);
 % --- Compose layer 2 (row 3) ---
 \node[comp] (p3) at (5.1, 3.45) {compose};
 \draw[arr] (p1) -- (p3);
 \draw[arr] (p2) -- (p3);
-\draw[arr] (df) -- (p3);
+% --- Shrink (row 4) ---
+\node[shrk] (sh) at (5.1, 4.6) {shrink};
+\draw[arr] (p3) -- (sh);
+% --- "compress" brace on the left (encompasses normalize + compose layers) ---
+\draw[decorate, decoration={brace, amplitude=6pt}]
+  (-1.3, 0.83) -- (-1.3, 3.78)
+  node[midway, left=8pt, font=\scriptsize\sffamily, align=center] {compress};
 \end{tikzpicture}
 \caption{\label{fig:topo} Recursion topology.
 Colors:
 \colorbox{yellow!20}{\textsf{\scriptsize core}}\,,
 \colorbox{green!15}{\textsf{\scriptsize normalize}}\,,
 \colorbox{blue!12}{\textsf{\scriptsize compose}}\,,
-\colorbox{red!10}{\textsf{\scriptsize deferred}}\,.
+\colorbox{orange!15}{\textsf{\scriptsize shrink}}\,.
 The tree is illustrative; the actual fan-in and depth depend on the
-number of shards and deferred proofs.}
+number of shards.}
 \end{figure}
 
 \paragraph{Programs vs.\ verifiers.}
@@ -688,8 +653,7 @@ Because of recursive proof aggregation, each recursion step acts as both a
 \emph{prover} and a \emph{verifier}: the program executed by the prover
 contains the verifier for the previous step's proof system.
 For example, the \texttt{compose} program contains the compress
-verifier, which verifies \texttt{normalize}, \texttt{compose}, and
-\texttt{deferred} proofs.
+verifier, which verifies \texttt{normalize} and \texttt{compose} proofs.
 In the subsections below, when we say ``the \texttt{compose} circuit
 verifies a proof,'' we mean that the compose \emph{program}
 embeds the compress \emph{verifier} as part of its constraint system.
@@ -709,7 +673,7 @@ The shapes are enumerated as follows:
 one shape per combination of chip cluster, preprocessed and main
 stacked BaseFold column counts, and padding column counts.
 \item \textbf{Compose}: one shape per arity ($N=1,2,3,4$).
-\item \textbf{Deferred}: a single shape.
+\item \textbf{Shrink}: a single shape.
 \end{itemize}
 
 The \texttt{compose} program enforces VK authentication:
@@ -717,13 +681,14 @@ it takes Merkle membership proofs for each input proof's verifying key
 as part of its witness, verifies them against the Merkle root, and
 checks that every input proof's $\mathsf{rpv}.\mathsf{vk\_root}$
 equals this root.
-The \texttt{deferred} program similarly verifies Merkle membership
-for its input proof's verifying key.
 The \texttt{normalize} program does not perform VK membership
 checks itself; it propagates $\mathsf{vk\_root}$ as a public value,
 which the compose verifier then checks for consistency.
 
-Note that the reason for the 1-1 normalization step is to enable
+Note that, because of the 1-1 normalization, there truly is exactly one \texttt{compose} circuit for each
+arity.
+If not for the normalization, the number of arity $N$ \texttt{compose} circuits would be $C^N$,
+where $C$ is the number of core shard proof shapes.
 
 \subsection{\texttt{core} circuits}\label{sec:core}
 
@@ -821,9 +786,7 @@ core shard proof. Its output is a proof of a fixed shape (\texttt{compress\_shap
 irrespective of the input shard proof's shape (which varies with the chip cluster).
 The circuit takes as witness a shard proof $\pi$, the verifying key $\vk$,
 a completeness flag $\mathsf{is\_complete}\in\{0,1\}$,
-a deferred-proof counter $n_{\mathsf{def}}$,
-a VK Merkle root $\mathsf{vk\_root}$,
-and a reconstructed deferred-proofs digest $d_{\mathsf{def}}^{\mathsf{recon}}$.
+and a VK Merkle root $\mathsf{vk\_root}$.
 
 The circuit performs two categories of work:
 \begin{itemize}
@@ -899,8 +862,8 @@ values zero, $\sigma=\mathcal{O}$).
 \subsection{\texttt{compose} circuit}\label{sec:compose}
 
 The \texttt{compose} circuit is an $N$-to-1 recursion circuit ($1\leq N\leq 4$)
-that consumes $N$ proofs --- each of which may be a \texttt{normalize},
-\texttt{compose}, or \texttt{deferred} proof --- and produces one proof of
+that consumes $N$ proofs --- each of which may be a \texttt{normalize}
+or \texttt{compose} proof --- and produces one proof of
 the fixed shape \texttt{compress\_shape}.
 Its purpose is to aggregate a batch of proofs that cover
 contiguous portions of the execution into a single proof.
@@ -920,7 +883,7 @@ The circuit enforces that the $N$ proofs form a contiguous chain:
 For each consecutive pair of proofs,
 the ``last'' boundary values of proof~$i$
 (PC, timestamp, memory addresses, page indices,
-deferred digest, exit code, syscall flags, etc.)
+exit code, syscall flags, etc.)
 must equal the ``previous'' boundary values of proof~$i{+}1$.
 \item \emph{Program identity.}
 The $\mathsf{sp1\_vk\_digest}$ and $\mathsf{proof\_nonce}$ are
@@ -938,7 +901,7 @@ are checked via $\varphi_{\mathrm{complete}}$.
 \end{itemize}
 
 Formally, let $\Pi_{\mathrm{comp}}$ denote the SNARK for \texttt{compress\_shape} proofs
-(used by \texttt{normalize}, \texttt{compose}, and \texttt{deferred} alike).
+(used by \texttt{normalize} and \texttt{compose} alike).
 Write $\mathsf{rpv}_i$ for the recursion public values of the $i$-th input proof
 ($1\leq i\leq N$, $1\leq N\leq 4$),
 and $\mathsf{rpv}$ for the aggregated output.
@@ -974,81 +937,77 @@ $$\relation_{\mathrm{compose}}=\left\lbrace\begin{array}{c|c}
 Here ``$\mathsf{last\_*}=\mathsf{prev\_*}$'' is shorthand for the continuity of all
 chained boundary values
 (PC, timestamp, memory init/finalize addresses, page indices,
-deferred digest, deferred proof index, exit code, and syscall flags).
+exit code, and syscall flags).
 
-\subsection{\texttt{deferred} circuit}\label{sec:deferred}
+\subsection{\texttt{shrink} circuit}\label{sec:shrink}
 
-The \texttt{deferred} circuit is a 1-to-1 recursion circuit that
-takes a single supposedly complete SP1 proof
-(representing a deferred sub-computation),
-verifies it, and updates the deferred digest.
-Its output is a proof of the fixed shape \texttt{compress\_shape}
-with $\mathsf{is\_complete}=0$,
-so that it can be composed with execution shard proofs
-in the \texttt{compose} circuit.
+The \texttt{shrink} circuit is a 1-to-1 recursion circuit that takes the
+final complete \texttt{compose} proof and re-proves it with reduced FRI
+parameters.
+Its purpose is to reduce the proof size: the compress stage uses
+FRI parameters sized for a log-trace-area of~$27$, while the shrink
+circuit uses parameters for a log-trace-area of~$25$, yielding a
+significantly smaller proof that is cheaper to verify in the subsequent
+outer proof system (e.g., Groth16).
+The shrink circuit has a single fixed shape.
+
+The circuit takes as witness
+a compress-stage proof $\pi$,
+the verifying key $\vk$ of the input proof,
+and a VK Merkle membership proof $\mathsf{mkl}$.
 
 The circuit performs the following work:
 \begin{itemize}
 \item \textbf{VK Merkle verification.}
-The input proof's verifying key is checked against a
+The input proof's verifying key is checked against the
 VK Merkle tree, ensuring it belongs to the set of
-permitted programs.
+permitted recursion circuits.
 
-\item \textbf{Proof verification and validity.}
-The input proof $\pi$ is verified against its verifying key $\vk$.
-The circuit asserts that the proof is marked
-$\mathsf{is\_complete}=1$ and $\mathsf{exit\_code}=0$.
+\item \textbf{Proof verification.}
+The compress-stage proof $\pi$ is verified against its verifying key
+$\vk$ using the compress verifier
+(the same verifier used inside \texttt{compose}).
 
-\item \textbf{Deferred digest update.}
-Given an initial digest $d_0$, the circuit computes the updated digest
-$$d_1 = \mathrm{Poseidon2}\!\left(
-  d_0
-  \;\|\;
-  \mathsf{rpv}'.\mathsf{sp1\_vk\_digest}
-  \;\|\;
-  \mathsf{rpv}'.\mathsf{committed\_value\_digest}
-\right)$$
-where $\mathsf{rpv}'$ denotes the input proof's recursion public values.
+\item \textbf{Completeness enforcement.}
+The circuit asserts that the input proof is marked
+$\mathsf{is\_complete}=1$, meaning it attests to a full program
+execution---the program has halted, all shards have been aggregated,
+the global cumulative sum equals $\mathcal{O}$, and all boundary
+conditions are satisfied.
 
 \item \textbf{Output construction.}
-The output recursion public values have
-$\mathsf{is\_complete}=0$,
-$\sigma=\mathcal{O}$,
-all memory and execution boundary values zeroed,
-and the deferred proof counter advanced by~$1$.
+The output recursion public values are derived from the input proof's
+public values.
+A Poseidon-2 digest of the output public values is committed as the
+shrink proof's public output.
 \end{itemize}
 
-Formally:
-$$\relation_{\mathrm{def}}=\left\lbrace\begin{array}{c|c}
+Formally, let $\Pi_{\mathrm{comp}}$ denote the SNARK for
+\texttt{compress\_shape} proofs (as in the \texttt{compose} circuit).
+Write $\mathsf{rpv}'$ for the recursion public values extracted from
+the input proof and $\mathsf{rpv}$ for the output.
+
+$$\relation_{\mathrm{shrink}}=\left\lbrace\begin{array}{c|c}
   \mathsf{rpv}
   ;\;
-  (\vk,\,\pi,\,
-   \mathsf{mkl},\,d_0,\,n_{\mathsf{def}})
+  (\vk,\,\pi,\,\mathsf{mkl})
   &
   \begin{array}{l}
   \Pi_{\mathrm{comp}}.\mathsf{Verify}(\mathsf{rpv}',\,\pi)=1\\[3pt]
-  \mathsf{rpv}'.\mathsf{is\_complete}=1
-    \;\wedge\;
-    \mathsf{rpv}'.\mathsf{exit\_code}=0\\[3pt]
   \vk \text{ verified against } \mathsf{mkl}\\[3pt]
-  \mathsf{rpv} \text{ records deferred digest range }
-    [d_0,\,d_1]\\[3pt]
-  \mathsf{rpv} \text{ records deferred proof range }
-    [n_{\mathsf{def}},\,n_{\mathsf{def}}{+}1]\\[3pt]
-  \mathsf{rpv}.\mathsf{is\_complete}=0,\quad
-  \mathsf{rpv}.\sigma=\mathcal{O}
+  \mathsf{rpv}'.\mathsf{is\_complete}=1\\[3pt]
+  \varphi_{\mathrm{complete}}(\mathsf{rpv}')\\[3pt]
+  \mathsf{rpv}\text{ is correctly derived from }\mathsf{rpv}'
   \end{array}
 \end{array}\right\rbrace$$
 
+\noindent
+Because shrink enforces completeness, its output serves as the
+definitive attestation that the entire program execution is valid.
+The shrink proof is then passed to the outer proof system for final
+verification.
 
 \section{Proof system instantiations}
-
-\begin{instruction}
-  Teams should explain how the relations are proven using AIR / IOPs / poly-IOPs and the BCS transform. That is, teams should provide a direct reduction
-from proving a relation to a low-degree test with
-  FRI or another protocol. The reductions should contain links to the circuits submitted to soundcalc.
-  The purpose of the section is to make explicit how the relations from the previous section are proven.
-\end{instruction}
 
 In the previous sections, we have described how to arithmetize the correct RISC-V execution of a program
 by decomposing it into a collection of tables of field elements, each of which has algebraic constraints
