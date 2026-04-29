@@ -15,6 +15,8 @@
 \usepackage[font=small]{caption}
 \usepackage[most]{tcolorbox}
 
+\newcommand{\rnote}[1]{{\color{red} {Ron: #1}}}
+
 \title{SP1 zkVM Architecture}
 \author{Succinct Labs\\[8pt]}
 
@@ -119,9 +121,7 @@ semantics
 \end{multline}
 
 \section{Segmentation}\label{sec:seg}
-It is typically not possible to prove an entire trace $\TTT$ at once on a single machine; it is therefore necessary to
-split the execution into shards.
-We now explain how SP1 undertakes this splitting.
+To facilitate efficient proving of large computations, SP1 splits the execution into ``shards''. We now explain how SP1 undertakes this splitting.
 
 \subsection{Execution Shards}
 
@@ -274,10 +274,11 @@ single proof.
 The cluster determines which chips are present and thus the circuit
 shape.
 Within a shard, each chip produces a table of field elements
-with algebraic constraints on its columns.
+with algebraic constraints on its columns. \rnote{Suggest: Within a shard, each chip is represented by a table. The columns corresponds to the operands relevant to the given chip, as well as auxiliarly ``helper columns''. The rows correspond to the different executions of the instruction in the given shard. The shard is further associated with algebraic constraints (AIRs) between its columns, which are designed to check correctness (via the zerocheck protocol, described below).}
+
 Consistency between chips is enforced by a \emph{bus}:
-a LogUp interaction argument (proved via GKR) that checks that all
-``send'' and ``receive'' messages across chips balance within the shard.
+a LogUp interaction argument (proved via GKR) \rnote{can we add a bibliography? happy to take care of it} that checks that all
+``send'' and ``receive'' messages across chips balance within the shard. \rnote{worth mentioning that the bus is also used to enfore local constraints on the chip as well e.g. range checks}
 All inter-shard communication passes through the global
 accumulation bus, arithmetized as a \texttt{Global} table present in all shards.
 
@@ -504,12 +505,12 @@ each chip contributes terms $+1/(\alpha - m_i)$ for sends and
 $-1/(\alpha - m_j)$ for receives, where $\alpha$ is a random
 challenge and $m_i, m_j$ are message fingerprints.
 The sum must equal zero, which holds if and only if sends and receives
-match as multisets.
+match as multisets \rnote{(whp over $\alpha$)}.
 
 Each interaction is declared with one of two \emph{scopes}:
 \begin{itemize}
 \item \textbf{Local} interactions must balance within the shard.
-This is enforced by the LogUp + GKR argument inside the shard proof.
+This is enforced by the LogUp + GKR \rnote{minor but I think either LogUpGKR or LogUp/GKR look nicer} argument inside the shard proof.
 \item \textbf{Global} interactions need not balance within a single
 shard.
 Instead, each shard computes its net contribution
@@ -528,7 +529,7 @@ shards.
 \subsection{Memory consistency}\label{sec:memory}
 
 SP1 does \emph{not} use Merkle tree commitments for memory.
-Instead, memory consistency is enforced entirely through the global bus.
+Instead, memory consistency is enforced entirely through the global bus. \rnote{via the memory-checking argument of Blum et al.}
 
 At the beginning of execution, a dedicated
 \texttt{MemoryGlobalInit} chip sends each initial memory cell
@@ -562,7 +563,7 @@ proofs it is therefore necessary to introduce some form of recursion or proof ag
 In this section, we describe the approach taken by SP1 to address this problem.
 
 It is useful when discussing recursion to set some terminology
-to avoid the confusion caused by ``the recursive nature of recursion''.
+to avoid the confusion caused by ``the recursive nature of recursion'' \rnote{?}.
 First, by a \textbf{recursion program} or \textbf{recursion circuit}, we mean a program or arithmetic cirucit that verifies
 one or more SNARK proofs and also optionally checks some aggregation logic.
 SNARK proofs can typically be verified in the circuit model of computation, so the term ``circuit'' here is suitable.
@@ -605,7 +606,7 @@ A 1-to-1 circuit that verifies a single core shard proof. A \texttt{normalize} p
 is always of a fixed shape (which we call \texttt{compress\_shape}), irrespective of
 the input proof's shape (Sec.~\ref{sec:normalize}).
 \item \texttt{compose}:
-An $N$-to-1 recursion circuit ($1\leq N\leq 4$) that verifies multiple
+An $N$-to-1 recursion circuit ($1\leq N\leq 4$) \rnote{maybe $2 \leq N \leq 4$?} that verifies multiple
 proofs of shape \texttt{compress shape} and performs some aggregation logic.
 A \texttt{compose} proof is always a single proof of shape \texttt{compress\_shape}
 (Sec.~\ref{sec:compose}).
@@ -683,7 +684,7 @@ Colors:
 \colorbox{blue!12}{\textsf{\scriptsize compose}}\,,
 \colorbox{orange!15}{\textsf{\scriptsize shrink}}\,.
 The tree is illustrative; the actual fan-in and depth depend on the
-number of shards.}
+number of shards. \rnote{tree isn't pretty can we make it more symmetric?}}
 \end{figure}
 
 \paragraph{Programs vs.\ verifiers.}
@@ -972,7 +973,7 @@ The proof of each shard follows a four-step protocol:
 \begin{enumerate}
 \item \textbf{Commit.}
       Treat the unpadded trace data as a single dense multilinear polynomial~$Q$
-      and commit to it via Reed--Solomon encoding and Merkle hashing
+      and commit to it via \rnote{(interleaved)} Reed--Solomon encoding and Merkle hashing
       (Sec.~\ref{sec:trace-commit}).
 \item \textbf{LogUp + GKR.}
       Prove that all local-scope interactions balance
@@ -980,7 +981,7 @@ The proof of each shard follows a four-step protocol:
       The output is a collection of $W$ evaluation claims on individual trace columns,
       all at a single point $\eta$
       (Sec.~\ref{sec:logup-gkr}).
-\item \textbf{Zerocheck + Sumcheck.}
+\item \textbf{Zerocheck + Sumcheck.} \rnote{i sugggest to remove sumcheck from the title}
       Prove that every algebraic constraint is satisfied on
       all unpadded rows.
       Batch the constraint zerocheck with the LogUp+GKR opening claims
@@ -1064,13 +1065,13 @@ $\log_2(\texttt{dense\_length})+\lceil\log_2(\texttt{dense\_batch})\rceil$ varia
 
 The prover commits to $Q$ as follows:
 \begin{enumerate}
-\item Interpret each chunk as the evaluations of a univariate polynomial of
+\item Interpret each chunk as the evaluations of a univariate polynomial \rnote{not as coefficients? IIRC for basefold we want the coefficient representation + this saves the inverse FFT} of
       degree $=\texttt{dense\_length}-1$.
 \item Reed--Solomon encode each chunk at rate $\rho=1/\texttt{blowup\_factor}$,
       producing codewords of length
       $\texttt{dense\_length}\times\texttt{blowup\_factor}$.
 \item Hash the encoded columns into a single Merkle tree;
-      the Merkle root constitutes the trace commitment.
+      the Merkle root constitutes the trace commitment. \rnote{maybe say that the rows are the leaves of the Merkle tree?}
 \end{enumerate}
 The prover also reports the unpadded height $h_i$ of each table.
 Together with the commitment, these heights fully determine the trace.
@@ -1105,7 +1106,7 @@ The verifier sums the $\kappa$ values across the interactions in the chip cluste
 if the sum is non-zero (the consistency of bus sends and receives is equivalent to this sum being zero).
 
 \paragraph{GKR reduction.} The above fractional sums can be described as the outputs of a circuit of
-depth $n_{row}$; SP1 proves the correctness of this circuit evaluation via the GKR polynomial IOP.
+depth $n_{row}$; SP1 proves the correctness of this circuit evaluation via the GKR polynomial IOP \rnote{interactive proof, not a PIOP}.
 
 \paragraph{Output.}
 After $n_{row}$ layers the GKR protocol terminates with evaluation claims on the multilinear extensions
@@ -1156,7 +1157,7 @@ The jagged PCS\footnote{\url{https://eprint.iacr.org/2025/917}} bridges the two 
 the padded columns.
 The protocol can be described as a sumcheck over a product of multilinears, one of which is $Q$ and
 the other of which can be efficiently evaluated.
-We use the jagged assist (as described in the reference) to further reduce verifier work in the evaluation
+We use the jagged assist (as described in the reference \rnote{missing}) to further reduce verifier work in the evaluation
 of the latter polynomial.
 
 \paragraph{Output.}
