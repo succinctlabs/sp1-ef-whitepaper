@@ -248,39 +248,43 @@ To facilitate efficient proving of large computations, SP1 splits the execution 
 \end{figure}
 
 After execution, the execution trace $\TTT$ is divided into
-\emph{shards} $\GGG_1,\GGG_2,\ldots,\GGG_m$
+\emph{execution shards} $\GGG_1,\GGG_2,\ldots,\GGG_m$
 (cf.\ Fig.~\ref{img:trace-seg}).
-Shards are not fixed-size; instead, the executor splits the trace when
+Execution shards are not fixed-size; instead, the executor splits the trace when
 the estimated trace area of the current shard exceeds a
 configurable threshold or more rarely if any one opcode is invoked more than a fixed number of times\footnote{The default element threshold is
 $2^{28}+2^{27}$, and the maximum opcode count is $2^{22}$.}.
-Each shard $\GGG_i$ corresponds to a contiguous subsequence of the
-execution trace, from $S_{\mathrm{start}_i}$ to $S_{\mathrm{end}_i}$,
-and is proven by its own core shard proof.
+Each execution shard $\GGG_i$ corresponds to a contiguous subsequence of the
+execution trace, from $S_{\mathrm{start}_i}$ to $S_{\mathrm{end}_i}$.
 
 Sharding reduces the proof of the entire execution to proving the
-validity of each shard and consistency between them.
-The global consistency argument (enforced during recursive aggregation)
-asserts:
+validity of each execution shard and consistency between them.
+The global consistency argument asserts:
 $$
 S_{\mathrm{end}_i} = S_{\mathrm{start}_{i+1}}\text{ for all }i\in[m-1],\quad S_{\mathrm{start}_1}=S_0,\quad S_{\mathrm{end}_m}=S_T.
 $$
 
 \subsection{Shard layout}\label{sec:core}
+We now introduce the notion of a \emph{proving shard} (a distinct notion from \emph{execution} shard).
 
-Each shard is proven by a \emph{chip cluster}---a collection of
-chips (specialized constraint systems) that are included together in a
-single proof.
-The cluster determines which chips are present and thus the circuit
-shape.
-Within a shard, each chip produces a table of field elements
-with algebraic constraints on its columns. \rnote{Suggest: Within a shard, each chip is represented by a table. The columns corresponds to the operands relevant to the given chip, as well as auxiliarly ``helper columns''. The rows correspond to the different executions of the instruction in the given shard. The shard is further associated with algebraic constraints (AIRs) between its columns, which are designed to check correctness (via the zerocheck protocol, described below).}
+Each shard is characterized by a collection of
+chips, specialized ``zkVM computational units''.
+Each chip is represented by a table.
+The columns corresponds to the operands relevant to the given operation, as well as auxiliarly ``helper columns''.
+The rows correspond to the different executions of the instruction in the given shard.
+The chip is further associated with algebraic
+constraints (AIRs) between its columns, which are designed to check all or part of the operation'scorrectness (via the zerocheck protocol, described below).
 
-Consistency between chips is enforced by a \emph{bus}:
-a LogUp interaction argument (proved via GKR \cite{DBLP:journals/iacr/PapiniH23}) that checks that all
-``send'' and ``receive'' messages across chips balance within the shard. \rnote{worth mentioning that the bus is also used to enfore local constraints on the chip as well e.g. range checks}
+Message-passing between chips within a shard is enabled by a \emph{local bus}; the matching of sent
+and received messages is proved via the LogUp/GKR lookup argument \cite{DBLP:journals/iacr/PapiniH23}.
+% a LogUp interaction argument (proved via GKR) \rnote{can we add a bibliography? happy to take care of it} that checks that all
+% ``send'' and ``receive'' messages across chips balance within the shard. \rnote{worth mentioning that the bus is also used to enfore local constraints on the chip as well e.g. range checks}
+
 All inter-shard communication passes through the global
-accumulation bus, arithmetized as a \texttt{Global} table present in all shards.
+accumulation bus, arithmetized as a \texttt{Global} table present in all shards (we describe the global
+consistency argument in more detail below).
+Each shard is responsible for computing and proving the correctness of $\sigma$, its contribution to the
+global multiset equality statement.
 
 Each shard proof attests to the relation
 $$
@@ -606,7 +610,7 @@ A 1-to-1 circuit that verifies a single core shard proof. A \texttt{normalize} p
 is always of a fixed shape (which we call \texttt{compress\_shape}), irrespective of
 the input proof's shape (Sec.~\ref{sec:normalize}).
 \item \texttt{compose}:
-An $N$-to-1 recursion circuit ($1\leq N\leq 4$) \rnote{maybe $2 \leq N \leq 4$?} that verifies multiple
+An $N$-to-1 recursion circuit ($2\leq N\leq 4$) \rnote{maybe $2 \leq N \leq 4$?} that verifies multiple
 proofs of shape \texttt{compress shape} and performs some aggregation logic.
 A \texttt{compose} proof is always a single proof of shape \texttt{compress\_shape}
 (Sec.~\ref{sec:compose}).
@@ -642,35 +646,40 @@ proof size before conversion to the outer proof system.
   arr/.style={draw, thin, -stealth},
 ]
 % --- Core shards (row 0) ---
-\node[core] (c1) at (0,   0) {core};
-\node[core] (c2) at (1.7, 0) {core};
-\node[core] (c3) at (3.4, 0) {core};
-\node[core] (c4) at (5.1, 0) {core};
-\node[core] (c5) at (6.8, 0) {core};
-\node[core] (c6) at (8.5, 0) {core};
+% LHS: 4 cores, evenly spaced
+\node[core] (c1) at (0,    0) {core};
+\node[core] (c2) at (1.3,  0) {core};
+\node[core] (c3) at (2.6,  0) {core};
+\node[core] (c4) at (3.9,  0) {core};
+% RHS: 3 cores, same 1.3 spacing, centered under RHS compose
+\node[core] (c5) at (5.85, 0) {core};
+\node[core] (c6) at (7.15, 0) {core};
+\node[core] (c7) at (8.45, 0) {core};
 % --- Normalize (row 1) ---
-\node[norm] (n1) at (0,   1.15) {norm};
-\node[norm] (n2) at (1.7, 1.15) {norm};
-\node[norm] (n3) at (3.4, 1.15) {norm};
-\node[norm] (n4) at (5.1, 1.15) {norm};
-\node[norm] (n5) at (6.8, 1.15) {norm};
-\node[norm] (n6) at (8.5, 1.15) {norm};
-\foreach \i in {1,...,6} { \draw[arr] (c\i) -- (n\i); }
-% --- Compose layer 1 (row 2) ---
-\node[comp] (p1) at (1.7, 2.3) {compose};
-\node[comp] (p2) at (6.0, 2.3) {compose};
+\node[norm] (n1) at (0,    1.15) {norm};
+\node[norm] (n2) at (1.3,  1.15) {norm};
+\node[norm] (n3) at (2.6,  1.15) {norm};
+\node[norm] (n4) at (3.9,  1.15) {norm};
+\node[norm] (n5) at (5.85, 1.15) {norm};
+\node[norm] (n6) at (7.15, 1.15) {norm};
+\node[norm] (n7) at (8.45, 1.15) {norm};
+\foreach \i in {1,...,7} { \draw[arr] (c\i) -- (n\i); }
+% --- Compose layer 1 (row 2): fan-in 4 (LHS), fan-in 3 (RHS) ---
+\node[comp] (p1) at (1.95, 2.3) {compose};
+\node[comp] (p2) at (7.15, 2.3) {compose};
 \draw[arr] (n1) -- (p1);
 \draw[arr] (n2) -- (p1);
 \draw[arr] (n3) -- (p1);
-\draw[arr] (n4) -- (p2);
+\draw[arr] (n4) -- (p1);
 \draw[arr] (n5) -- (p2);
 \draw[arr] (n6) -- (p2);
+\draw[arr] (n7) -- (p2);
 % --- Compose layer 2 (row 3) ---
-\node[comp] (p3) at (5.1, 3.45) {compose};
+\node[comp] (p3) at (4.55, 3.45) {compose};
 \draw[arr] (p1) -- (p3);
 \draw[arr] (p2) -- (p3);
 % --- Shrink (row 4) ---
-\node[shrk] (sh) at (5.1, 4.6) {shrink};
+\node[shrk] (sh) at (4.55, 4.6) {shrink};
 \draw[arr] (p3) -- (sh);
 % --- "compress" brace on the left (encompasses normalize + compose layers) ---
 \draw[decorate, decoration={brace, amplitude=6pt}]
@@ -684,7 +693,7 @@ Colors:
 \colorbox{blue!12}{\textsf{\scriptsize compose}}\,,
 \colorbox{orange!15}{\textsf{\scriptsize shrink}}\,.
 The tree is illustrative; the actual fan-in and depth depend on the
-number of shards. \rnote{tree isn't pretty can we make it more symmetric?}}
+number of shards.}
 \end{figure}
 
 \paragraph{Programs vs.\ verifiers.}
@@ -711,7 +720,7 @@ The shapes are enumerated as follows:
 \item \textbf{Normalize} (the vast majority of leaves):
 one shape per combination of chip cluster, preprocessed and main
 stacked BaseFold column counts, and padding column counts.
-\item \textbf{Compose}: one shape per arity ($N=1,2,3,4$).
+\item \textbf{Compose}: one shape per arity ($N=2,3,4$).
 \item \textbf{Shrink}: a single shape.
 \end{itemize}
 
