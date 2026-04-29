@@ -30,7 +30,7 @@
 
 This document describes the architecture of the \textbf{SP1 zkVM}
 according to the W1 deliverable of the EF zkVM whitepaper
-guidelines\footnote{\url{https://zkevm.ethereum.foundation/blog/cryptography-research-update}}.
+guidelines \cite{efZkvmGuidelines}.
 SP1 proves execution of RISC-V guest programs using:
 
 \begin{itemize}
@@ -90,7 +90,7 @@ trace $\TTT$ as above with $S_0$ as the initial state.
 
 \paragraph{Supported Instructions.}
 SP1 supports the full RV64IM instruction
-set\footnote{\url{https://riscv.org/technical/specifications/}}:
+set \cite{riscv}:
 the base 64-bit integer instructions (I) and the integer
 multiply/divide extension (M).
 
@@ -277,7 +277,7 @@ Within a shard, each chip produces a table of field elements
 with algebraic constraints on its columns. \rnote{Suggest: Within a shard, each chip is represented by a table. The columns corresponds to the operands relevant to the given chip, as well as auxiliarly ``helper columns''. The rows correspond to the different executions of the instruction in the given shard. The shard is further associated with algebraic constraints (AIRs) between its columns, which are designed to check correctness (via the zerocheck protocol, described below).}
 
 Consistency between chips is enforced by a \emph{bus}:
-a LogUp interaction argument (proved via GKR) \rnote{can we add a bibliography? happy to take care of it} that checks that all
+a LogUp interaction argument (proved via GKR \cite{DBLP:journals/iacr/PapiniH23}) that checks that all
 ``send'' and ``receive'' messages across chips balance within the shard. \rnote{worth mentioning that the bus is also used to enfore local constraints on the chip as well e.g. range checks}
 All inter-shard communication passes through the global
 accumulation bus, arithmetized as a \texttt{Global} table present in all shards.
@@ -1106,7 +1106,7 @@ The verifier sums the $\kappa$ values across the interactions in the chip cluste
 if the sum is non-zero (the consistency of bus sends and receives is equivalent to this sum being zero).
 
 \paragraph{GKR reduction.} The above fractional sums can be described as the outputs of a circuit of
-depth $n_{row}$; SP1 proves the correctness of this circuit evaluation via the GKR polynomial IOP \rnote{interactive proof, not a PIOP}.
+depth $n_{row}$; SP1 proves the correctness of this circuit evaluation via the GKR polynomial IOP \rnote{interactive proof, not a PIOP} \cite{DBLP:journals/iacr/PapiniH23}.
 
 \paragraph{Output.}
 After $n_{row}$ layers the GKR protocol terminates with evaluation claims on the multilinear extensions
@@ -1153,7 +1153,7 @@ Sec.~\ref{sec:trace-commit}.
 Each padded column $p_\ell$ of height $\mathcal{N}_{row}$ is a multilinear
 polynomial in $n_{row}$ variables.
 Its unpadded entries occupy a contiguous slice of the dense array underlying~$Q$.
-The jagged PCS\footnote{\url{https://eprint.iacr.org/2025/917}} bridges the two representations without the prover ever materializing
+The jagged PCS~\cite{DBLP:journals/iacr/HemoJRRR25} bridges the two representations without the prover ever materializing
 the padded columns.
 The protocol can be described as a sumcheck over a product of multilinears, one of which is $Q$ and
 the other of which can be efficiently evaluated.
@@ -1168,7 +1168,7 @@ $Q(z)=v$ on the dense polynomial.
 \subsection{Dense PCS (BaseFold)}\label{sec:dense-pcs}
 
 The final step proves the evaluation claim $Q(z)=v$ using
-stacked \textbf{BaseFold}, the multilinear variant of FRI.
+stacked \textbf{BaseFold} \cite{DBLP:conf/crypto/ZeilbergerCF24}, the multilinear variant of FRI.
 
 \paragraph{Protocol.}
 BaseFold combines the standard FRI proximity test with a sumcheck
@@ -1200,4 +1200,8 @@ In the remaining steps, prover and verifier engage in the BaseFold protocol for 
       Proof-of-work grinding of \texttt{grinding\_query\_phase} bits
       precedes this phase.
 \end{enumerate}
+
+\bibliographystyle{alpha}
+\bibliography{references}
+
 \end{document}
