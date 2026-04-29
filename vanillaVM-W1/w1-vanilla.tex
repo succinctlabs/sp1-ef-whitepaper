@@ -265,7 +265,8 @@ S_{\mathrm{end}_i} = S_{\mathrm{start}_{i+1}}\text{ for all }i\in[m-1],\quad S_{
 $$
 
 \subsection{Shard layout}\label{sec:core}
-We now introduce the notion of a \emph{proving shard} (a distinct notion from \emph{execution} shard).
+We now introduce the notion of a \emph{proving shard} (a distinct notion from \emph{execution} shard),
+which we also abbreviate to ``shard'' in what follows.
 
 Each shard is characterized by a collection of
 chips, specialized ``zkVM computational units''.
@@ -301,6 +302,10 @@ $$
 where $C$ is the chip cluster determining the circuit, $\mathsf{pv}$ are the shard's public values
 (boundary state, digests, etc.), and $\sigma$ is the shard's global cumulative sum\footnote{The proof system
 for this circuit is named ``core'' in \href{https://github.com/ethereum/soundcalc/blob/main/soundcalc/zkvms/sp1/sp1.toml}{soundcalc}}.
+
+Now, we can describe the relationship between execution shards and proving shards.
+Each execution shard leads to at least one proving shard, but that proving shard may still need
+to delegate some of the precompile correctness
 
 The clusters are of four types:
 
