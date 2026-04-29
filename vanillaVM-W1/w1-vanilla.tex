@@ -1007,112 +1007,246 @@ definitive attestation that the entire program execution is valid.
 The shrink proof is then passed to the outer proof system for final
 verification.
 
-\section{Proof system instantiations}
+\section{Proof system instantiations}\label{sec:proof-system}
 
-In the previous sections, we have described how to arithmetize the correct RISC-V execution of a program
-by decomposing it into a collection of tables of field elements, each of which has algebraic constraints
-placed on its columns.
-Furthermore, we allow tables to ``send'' and ``receive'' messages with multiplicity through a collection of ``interaction kinds''.
-All tables are zero padded to have the same height, call it $\mathcal{N}_{row}= 2^{n_{row}}$.
-For the RISC-V circuits, we use $n_{row}=22$.
-The reason for this padding is that it allows for the verifier to be described as a uniform arithmetic
-circuit, independent of the unpadded table heights.
-This naturally introduces some prover and verifier overhead; naively, this can be a very large overhead
-if one of the tables is wide and short, in which case the padding adds a substantial number of trace cells,
-but the Hypercube proof system has a number of mitigations to minimize this overhead.
-We will describe some of these mitigations below, especially because one of them is a cryptographic
-protocol invented for this particular zkVM context.
-First, though, let us describe protocol as if it were actually run on the padded tables:
+In the previous sections we described how to arithmetize correct RISC-V execution
+by decomposing it into a collection of tables of field elements, each with algebraic constraints
+on its columns, and
+allowing tables to \emph{send} and \emph{receive} messages with multiplicity through
+a collection of interaction kinds.
+All tables in a chip cluster are zero-padded to a common height $\mathcal{N}_{row}=2^{n_{row}}$;
+for core circuits $n_{row}=22$.
+Throughout this section, let $W$ denote the total number of columns across all tables in the shard.
 
+The proof of each shard follows a four-step protocol:
 \begin{enumerate}
-\item Treat each column of each table as a multilinear polynomial in $n_{row}$ variables. Use a batch
-multilinear polynomial commitment scheme to commit to these polynomials. Let $W$ denote the total
-number of columns/multilinear polynomials.
-\item Use GKR with $n_{row}$ {\color{red} maybe $\pm 1$} rounds to prove the LogUp argument equating the ``send'' and ``receive'' multisets across
-all tables. The output of GKR is a collection of $W$ evaluation claims, one on each column, all at
-the same point $\eta$.
-\item Use the point $\eta$ as the randomness for the zerocheck sumcheck which proves constraint satisfaction.
-Batch the zerocheck sumcheck with the sumchecks which ``prove'' the evaluation claims from LogUp+GKR
-(more precisely, the sumchecks
-reduce evaluation claims at one point to evaluation claims at another).
-The output of this batched sumcheck is again a collection of $W$ evaluation claims, not at a new point
-$\eta'$.
-\item Use the batch multilinear polynomial commitment scheme to prove these evaluation claims.
+\item \textbf{Commit.}
+      Treat the unpadded trace data as a single dense multilinear polynomial~$Q$
+      and commit to it via Reed--Solomon encoding and Merkle hashing
+      (Sec.~\ref{sec:trace-commit}).
+\item \textbf{LogUp + GKR.}
+      Prove that all local-scope interactions balance
+      (sends $=$ receives as multisets).
+      The output is a collection of $W$ evaluation claims on individual trace columns,
+      all at a single point $\eta$
+      (Sec.~\ref{sec:logup-gkr}).
+\item \textbf{Zerocheck + Sumcheck.}
+      Prove that every algebraic constraint is satisfied on
+      all unpadded rows.
+      Batch the constraint zerocheck with the LogUp+GKR opening claims
+      into a single sumcheck whose output is a new collection of $W$ evaluation claims at a
+      point~$\eta'$
+      (Sec.~\ref{sec:zerocheck}).
+\item \textbf{PCS opening.}
+      Reduce the $W$ column claims at~$\eta'$ to a single
+      claim on~$Q$ via the jagged PCS (Sec.~\ref{sec:jagged}),
+      then prove the claim on~$Q$ via BaseFold (Sec.~\ref{sec:dense-pcs}).
 \end{enumerate}
 
-If the prover actually materialized the full $W\times \mathcal{N}_{row}$ trace, this would be an
-enormous quantity of data.
-For example $W\approx 2^{12}$ is in the mid-range of column counts among various ``table clusters'' used
-in SP1.
-For a 32-bit field such as KoalaBear, this translates into a total of $4\times W\times \mathcal{N}_{row} = 2^{36}$
-bytes, or 64 GB.
-This is twice the global VRAM of an Nvidia 5090 GPU.
-Clearly, keeping around the padding is not feasible.
-In order to mitigate these costs, the SP1 proof system uses the following techniques:
-\begin{enumerate}
-\item Instead of using a batch multilinear PCS directly, we use the jagged polynomial commitment scheme, which
-is a sparse PCS designed for exactly the kind of sparsity inherent in the table layout as described above.
-This enables the prover and verifier PCS costs to depend only on the size of the unpadded data
-(and notably, the verifier PCS costs can be made independent of $W$). For the internal dense PCS,
-we use batch BaseFold, which we view as a multilinear PCS for committing to a single multilinear
-in \texttt{log\_total\_unpadded\_trace\_area} variables.
-The evaluation proof for a point $\eta = \eta_n || \eta_k$ consists of
-\item For the sumchecks, the contributions of the padding rows are always easy to compute and don't
-scale with the amount of padding. The prover makes frequent use of this fact.
-\end{enumerate}
+Because every table is padded to the same height $\mathcal{N}_{row}$,
+the verifier can be described as an arithmetic circuit that depends on the chip
+cluster and the total unpadded trace area, but is \emph{independent} of the individual
+tables' unpadded heights.
+The total number of distinct verifier circuits is therefore bounded by $\approx 2^{18}$,
+which is small enough that all circuits can be pre-built;
+no VM is needed in the recursion layer.
 
-\textbf{Important Note: } The Hypercube proof system verifier can be described as an arithmetic circuit.
-The circuit is determined by the total trace area of the unpadded data, and the tables included in the
-segment.
-Notably, the circuit is \emph{independent} of the individual tables' unpadded heights.
-Hence, the total number of verifier circuits can be easily limited to the $\approx 2^{18}$ range,
-which makes it feasible to build them all instead of using a VM for recursion.
+If the prover actually materialized the full $W\times\mathcal{N}_{row}$ padded trace,
+the data volume would be enormous:
+$W\approx 2^{12}$ columns at 4~bytes each gives
+$4\times 2^{12}\times 2^{22}=2^{36}$ bytes $= 64\,$GB.
+The jagged PCS (Sec.~\ref{sec:jagged}) ensures that both prover and verifier costs
+depend only on the size of the \emph{unpadded} data.
 
-In the following subsections, we describe each section of the protocol in a bit more detail,
-with an eye towards making the soundness analysis in soundcalc more transparent. Whenever a variable
-appears in \texttt{typewriter font}, it refers to a parameter in the ``sp1.toml'' file in the soundcalc
-repository.
+\medskip\noindent
+\textbf{Notation.}
+Whenever a variable appears in \texttt{typewriter font},
+it refers to the corresponding parameter in the
+\texttt{sp1.toml} configuration file in the \texttt{soundcalc} repository.
 
-\subsection{LogUp + GKR Details}
-{\color{red} TODO: Ask Min about the LogUp+GKR business.}
+%% ================================================================
+\subsection{Field and Fiat--Shamir challenger}\label{sec:field}
 
-\subsection{Zerocheck Details}
-Recall that we have a trace of height $\mathcal{N}_{row}$ and width $W$ on which we place \texttt{num\_constraints}
-algebraic constraints, denoted $C_0, C_1, \ldots, C_{num\_constraints}$.
-Each $C_i$ is a polynomial of total degree at most $3$ in $W$ variables, though almost always it depends trivially on most of the variables.
-It is useful also to write $W= w_1+ \ldots + w_k$, where $k$ is the number of tables in the cluster,
-and to group the constraints by table, so that $C_{i,j}$ refers to the $j$-th constraint on the $i$-th
-table.
-Let us write $c_i$ for the number of constraints in the $i$-th table, and $p_{i,\ell}$ for the
-$\ell$-th column of the $i$-th table.
-Finally, let us write $h_i$ for the height of the $i$-th table (not including padding).
-The claim for our zerocheck is that, $\forall x\in \{0,1\}^{n_{row}}, \quad i\in [k], \quad j\in [c_i]$:
+\paragraph{Base field.}
+SP1 operates over the \textbf{KoalaBear} prime field
+$\mathbb{F}_p$ with $p=2^{31}-2^{24}+1$.
 
-\begin{equation}
-C_{i,j}(p_{i,1}[x], \ldots, p_{i,w_i}[x]) = \left\{ \begin{array}{lr}
-0, &x< h_i,\\
-C(0,\ldots, 0), & x\geq h_i
-\end{array}
-\quad \right.
-\end{equation}
-Note that the constraint evaluation on zero-padding may not result in 0, so at the moment our protocol
-does not match exactly with the usual zerocheck.
-However, note the following. If $\mathrm{geq}_{h_i}(x)$ is the function which, for $x\in \{0,1\}^{n_{row}}$,
-is zero if $x<h_i$ and 1 if $x\geq h_i$, then its multilinear extension $\widehat{\mathrm{geq}}_{h_i}(z)$
-is relatively straightforward to evaluate at arbitrary $z\in \mathbb{F}^{n_{row}}$, using the following
-recursion relation. Write $z = (z_0, z_{rest})\in \mathbb{F}\times \mathbb{F}^{n_{row}-1}$, and write $h_i = h_{i,0} * 2^{n_{row}-1} + h_{i, rest}$.
-Then, we have:
+
+\paragraph{Extension field.}
+All verifier randomness is sampled over the degree-4 extension
 \[
-\widehat{\mathrm{geq}}_{h_i}(z) = z_0\cdot(1-h_{i,0}) + \widehat{\mathrm{eq}}(z_0, h_{i,0})\cdot \widehat{\mathrm{geq}}_{h_{i,rest}}(z_{rest})
+  \mathbb{F}_{p^4} \;=\; \mathbb{F}_p[x]\big/(x^4-3),
 \]
+a binomial extension.
+We write $\mathbb{F}$ for the base field and $\mathbb{E}$ for the extension
+when the distinction matters (\texttt{field = "KoalaBear\^{}4"} in \texttt{sp1.toml}).
 
+\paragraph{Fiat--Shamir challenger.}
+Interactive challenges are derived non-interactively via a
+\textbf{Poseidon-2 duplex sponge}.
+The sponge state has width~16 base-field elements;
+a digest consists of 8 base-field elements
+($8\times 31 = 248$ bits; cf.\ \texttt{hash\_size\_bits = 248}).
 
-To prove this, first, we sample a random $\zeta \in \mathbb{F}^{n_{row}}$, $\lambda\in \mathbb{F}, \alpha \in \mathbb{F}$,
-and turn this collection of claims into the single sumcheck claim:
+\paragraph{Proof-of-work grinding.}
+At three points in the protocol the prover must perform proof-of-work
+grinding before the verifier supplies the next challenge:
+\begin{itemize}
+\item Before batching BaseFold evaluation claims
+      \texttt{grinding\_batching\_phase} bits.
+\item Before the FRI query phase in BaseFold:
+      \texttt{grinding\_query\_phase} bits.
+\item Before sampling the randomness used for LogUp fingerprinting (\texttt{grinding\_bits\_lookup}).
+\end{itemize}
+These grinding steps raise the cost of a forging attempt
+without increasing verifier complexity.
 
-\begin{equation}
-\sum_{i=0}^{k-1}\sum_{j=0}^{c_i-1} \lambda^i\alpha^j \widehat{\mathrm{geq}}_{h_i}(\zeta)=\sum_{x\in \{0,1\}^{n_{row}}} \widehat{\mathrm{eq}}_\zeta(x)\sum_{i=0}^{k-1} \lambda^i\sum_{j=0}^{c_i-1} \alpha^j C_{i,j}(p_{i,1}[x], \ldots, p_{i,w_i}[x])
+%% ================================================================
+\subsection{Trace commitment}\label{sec:trace-commit}
+
+All unpadded table data is flattened into a single array.
+This array is divided into chunks of size
+$\texttt{dense\_length}$ (a power of two);
+each chunk becomes one ``column'' of a dense multilinear polynomial~$Q$.
+There are \texttt{dense\_batch} such chunks in total, so
+$Q$ is a multilinear polynomial in
+$\log_2(\texttt{dense\_length})+\lceil\log_2(\texttt{dense\_batch})\rceil$ variables.
+
+The prover commits to $Q$ as follows:
+\begin{enumerate}
+\item Interpret each chunk as the evaluations of a univariate polynomial of
+      degree $=\texttt{dense\_length}-1$.
+\item Reed--Solomon encode each chunk at rate $\rho=1/\texttt{blowup\_factor}$,
+      producing codewords of length
+      $\texttt{dense\_length}\times\texttt{blowup\_factor}$.
+\item Hash the encoded columns into a single Merkle tree;
+      the Merkle root constitutes the trace commitment.
+\end{enumerate}
+The prover also reports the unpadded height $h_i$ of each table.
+Together with the commitment, these heights fully determine the trace.
+
+%% ================================================================
+\subsection{LogUp + GKR}\label{sec:logup-gkr}
+
+The goal of this step is to prove that all \emph{local-scope} interactions
+balance: for each interaction kind, the multiset of sent messages equals
+the multiset of received messages.
+(Recall from Sec.~\ref{sec:bus} that
+global interactions are handled by the septic curve accumulator.)
+
+\paragraph{LogUp equation.}
+A chip cluster defines a maximum number \texttt{num\_columns\_S} of interactions found in the chips,
+and a maximum message size \texttt{num\_lookups\_M} for all chips
+Each message~$\mathbf{v} = (v_1,\ldots, v_{\texttt{num\_lookups\_M}})$ sent through the bus with index $BI$ is mapped to a field element via a \emph{multilinear fingerprint}:
+\[
+  \mathrm{fp}(\mathbf{v}) \;=\; \mathrm{eq}_{\beta}(0)\cdot BI + \sum_{i=1}^{\texttt{num\_lookups\_M}-1} \mathrm{eq}_{\mathbf{\beta}}(i)\, v_i
+  \qquad (\texttt{multilinear\_fingerprint = true}),
+\]
+where $\mathbf{\beta}\in \mathbb{E}^{\lceil{\log_2()\texttt{num\_lookups\_M})}\rceil}$ is randomness
+sampled for the LogUp protocol.
+For a given interaction, let $t$ denote the vector $\{\mathrm{fp}(\mathbf{v}_x)\}_{x\in \{0,1\}^{n_{row}}}$, where $\mathbf{v}_x$ is the message
+passed from row $x\in \{0,1\}^{n_{row}}$.
+Similarly, let $m(x)$ denote the multiplicity of the message at row $x$.
+The verifier samples $\alpha\in \mathbb{E}$ and the prover computes and sends
+\begin{equation}\label{eq:logup}
+  \kappa:= \sum_{x\in\{0,1\}^{n_{row}}} \frac{m(x)}{\alpha - t(x)}.
 \end{equation}
+The verifier sums the $\kappa$ values across the interactions in the chip cluster, and rejects a proof
+if the sum is non-zero (the consistency of bus sends and receives is equivalent to this sum being zero).
 
+\paragraph{GKR reduction.} The above fractional sums can be described as the outputs of a circuit of
+depth $n_{row}$; SP1 proves the correctness of this circuit evaluation via the GKR polynomial IOP.
 
+\paragraph{Output.}
+After $n_{row}$ layers the GKR protocol terminates with evaluation claims on the multilinear extensions
+$\hat{m}(\eta)$ and $\hat{t}(\eta)$.
+The original vectors $m$ and $t$ are affine-linear combinations of the original columns of the chip.
+The prover provides column openings of the chip at~$\eta$, and the verifier checks that the proper affine-linear combinations
+of the chips match the claimed values for $\hat{m}(\eta), \hat{t}(\eta)$.
+
+%% ================================================================
+\subsection{Zerocheck}\label{sec:zerocheck}
+
+The goal of this step is to prove that every algebraic constraint is
+satisfied on the unpadded rows of every table, while simultaneously
+proving the column evaluation claims produced by LogUp+GKR.
+
+\paragraph{Setup.}
+The chip cluster has $k$ tables.
+Table~$i$ has $w_i$ columns
+$p_{i,1},\ldots,p_{i,w_i}$, unpadded height~$h_i$,
+and $c_i$ constraints $C_{i,1},\ldots,C_{i,c_i}$, each of total degree at
+most \texttt{air\_max\_degree}$\,=3$.
+
+\paragraph{Zerocheck sumcheck.}
+The constraint and GKR opening claims are batched (via random challenges)
+into a single sumcheck over $\{0,1\}^{n_{row}}$.
+After $n_{row}$ rounds, the sumcheck reduces to an evaluation claim
+on the batched polynomial at a random point~$\eta'$.
+This claim involves the constraint polynomials~$C_{i,j}$ evaluated at
+the columns of each table at~$\eta'$.
+Since each $C_{i,j}$ is an explicit low-degree polynomial,
+the verifier can check the claim given the individual column values
+$p_{i,\ell}(\eta')$.
+The prover therefore supplies these values, yielding
+$W$ column evaluation claims at~$\eta'$.
+
+%% ================================================================
+\subsection{Jagged PCS}\label{sec:jagged}
+
+The goal of this step is to reduce the $W$ column evaluation claims at~$\eta'$
+to a single claim on the dense polynomial~$Q$ committed in
+Sec.~\ref{sec:trace-commit}.
+
+\paragraph{Column $\leftrightarrow$ dense relationship.}
+Each padded column $p_\ell$ of height $\mathcal{N}_{row}$ is a multilinear
+polynomial in $n_{row}$ variables.
+Its unpadded entries occupy a contiguous slice of the dense array underlying~$Q$.
+The jagged PCS\footnote{\url{https://eprint.iacr.org/2025/917}} bridges the two representations without the prover ever materializing
+the padded columns.
+The protocol can be described as a sumcheck over a product of multilinears, one of which is $Q$ and
+the other of which can be efficiently evaluated.
+We use the jagged assist (as described in the reference) to further reduce verifier work in the evaluation
+of the latter polynomial.
+
+\paragraph{Output.}
+The jagged PCS reduces the $W$ column claims to a single claim
+$Q(z)=v$ on the dense polynomial.
+
+%% ================================================================
+\subsection{Dense PCS (BaseFold)}\label{sec:dense-pcs}
+
+The final step proves the evaluation claim $Q(z)=v$ using
+stacked \textbf{BaseFold}, the multilinear variant of FRI.
+
+\paragraph{Protocol.}
+BaseFold combines the standard FRI proximity test with a sumcheck
+that establishes the multilinear evaluation of the committed oracle.
+Recall that $Q$ is described as a table of height \texttt{dense\_length}
+and width \texttt{dense\_batch}.
+Let $n:=\lceil\log_2(\texttt{dense\_batch})\rceil$, $m:=\log_2(\texttt{dense\_length})$.
+Decompose $z=(z_{stack}, z_{col})$, where $z_{stack}\in \mathbb{E}^m,\quad z_{col}\in \mathbb{E}^n$.
+\begin{enumerate}
+\item \textbf{Columnwise claims.} The prover sends multilinear evaluation claims of the columns of $Q$
+at $z_{stack}$.
+\item \textbf{Batching step.} The verifier samples randomness $\mathbf{\tau}\in \mathbb{E}^n$.
+The prover takes the random linear combination of the columns of $Q$ via the coefficients $\hat{\mathrm{eq}}_{\mathbf{\tau}}(\cdot)$.
+The prover and verifier take the same linear combination of the column evaluation claims.
+In the remaining steps, prover and verifier engage in the BaseFold protocol for the random linear combination.
+\item \textbf{Folding rounds.}
+      In each round the prover sends a sumcheck message and folds the current polynomial by a factor of~$2$
+      (as specified by \texttt{fri\_folding\_factors}),
+      using the next sumcheck challenge as the folding randomness.
+      The folded oracle is committed via Reed-Solomon encoding and a fresh Merkle tree.
+\item \textbf{Early stop.}
+      Folding stops when length of the R-S encoded oracle reaches
+      \texttt{fri\_early\_stop\_degree}.
+      The prover sends the remaining coefficients in the clear.
+\item \textbf{Query phase.}
+      The verifier samples \texttt{num\_queries} query positions.
+      For each query the prover opens the corresponding leaf in every
+      folding-round Merkle tree.
+      Proof-of-work grinding of \texttt{grinding\_query\_phase} bits
+      precedes this phase.
+\end{enumerate}
 \end{document}
