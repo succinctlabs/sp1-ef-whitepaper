@@ -270,12 +270,15 @@ which we also abbreviate to ``shard'' in what follows.
 
 Each shard is characterized by a collection of
 chips, specialized ``zkVM computational units''.
-Each chip is represented by a table.
-The columns corresponds to the operands relevant to the given operation, as well as auxiliarly ``helper columns''.
-The rows correspond to the different executions of the instruction in the given shard.
+Each chip is represented by a table, and typically corresponds to a RISC-V instruction,
+a cryptographic operation, or some other fixed-size computation.
+The columns corresponds to the operands relevant to the given operation, as well as auxiliary ``helper columns''.
+The rows correspond to the different executions of the instruction/operation/computation in the given shard.
 The chip is further associated with algebraic
-constraints (AIRs) between its columns, which are designed to check all or part of the operation'scorrectness (via the zerocheck protocol, described below).
+constraints (AIRs) between its columns, which are designed to check all or part of the operation's
+correctness. Constraints are proved via the zerocheck protocol, described below.
 
+The remainder of a chip's correctness is checked via message passing.
 Message-passing between chips within a shard is enabled by a \emph{local bus}; the matching of sent
 and received messages is proved via the LogUp/GKR lookup argument \cite{DBLP:journals/iacr/PapiniH23}.
 % a LogUp interaction argument (proved via GKR) \rnote{can we add a bibliography? happy to take care of it} that checks that all
@@ -285,13 +288,13 @@ All inter-shard communication passes through the global
 accumulation bus, arithmetized as a \texttt{Global} table present in all shards (we describe the global
 consistency argument in more detail below).
 Each shard is responsible for computing and proving the correctness of $\sigma$, its contribution to the
-global multiset equality statement.
+global multiset equality accumulator.
 
 Each shard proof attests to the relation
 $$
 \relation_{\mathrm{shard}}^{(C)} \;=\; \left\{
 \left((\mathsf{pv},\sigma);\; \mathsf{trace}\right) \;\Bigg|\;
-\begin{array}{c}
+\begin{array}{l}
 \text{All chip constraints in cluster $C$ are satisfied}\\
 \text{All local-scope bus interactions balance (via LogUp)}\\
 \sigma \text{ is the correct global cumulative sum}\\
@@ -305,9 +308,10 @@ for this circuit is named ``core'' in \href{https://github.com/ethereum/soundcal
 
 Now, we can describe the relationship between execution shards and proving shards.
 Each execution shard leads to at least one proving shard, but that proving shard may still need
-to delegate some of the precompile correctness
-
-The clusters are of four types:
+to delegate some of the precompile correctness to another proving shard.
+Moreover, global memory correctness requires the addition of proving shards that don't arise from
+execution shards.
+With this in mind, we describe the four types of chip clusters available for proving shards:
 
 \begin{enumerate}
 \item \textbf{Base core cluster} (\texttt{core}).
@@ -323,13 +327,9 @@ and \texttt{Global} (global bus accumulator).
 Some precompiles are compact enough to be retained in the core cluster,
 avoiding the overhead of a separate shard proof and allowing communication
 with their calling context via the local lookup argument.
-The retainable extensions are:
-\texttt{MemoryGlobalInit}/\texttt{MemoryGlobalFinal},
-\texttt{Bls12381Fp}, \texttt{Bn254Fp},
-\texttt{Sha256\{Extend,Compress\}} (with their control chips),
-\texttt{Uint256Ops}, and \texttt{Poseidon2}.
+In particular, SHA hashing and Bn254 field operations are proved alongside RISC-V instructions.
 Extended clusters are generated for subsets of size 0, 1, or all of these extensions,
-plus one additional combination (\texttt{core} + memory global + SHA-256 + \texttt{Uint256Ops}).
+plus one additional combination.
 
 \item \textbf{Deferred precompile clusters} (\texttt{precompile-}$P$).
 Precompiles with high arithmetization costs (in terms of number of columns
@@ -339,21 +339,16 @@ the precompile-specific chip(s) together with a base set of infrastructure chips
 \texttt{SyscallPrecompile}, \texttt{MemoryLocal}, and \texttt{Global}.
 They communicate with their RISC-V calling context
 via the global lookup argument.
-The deferred precompiles include:
-elliptic curve operations (Ed25519, Secp256k1, Secp256r1, BN-254, BLS12-381 point add/double),
-field arithmetic (BLS12-381 and BN-254 $\mathbb{F}_p$/$\mathbb{F}_{p^2}$ operations),
-hash functions (Keccak permutation, SHA-256, Poseidon2),
-and big-integer arithmetic (\texttt{Uint256Mul}, \texttt{Uint256Ops}).
+The deferred precompiles include more expensive elliptic curve operations (e.g. Secp256k1, Secp256r1, BN-254 add/double)
+and the Keccak hash functions.
 
 \item \textbf{Memory boundary cluster} (\texttt{mem-boundary}).
 The global memory argument requires initialization and
 finalization: sending the initial memory state into the global bus and receiving the final memory state
 from the global bus.
+The memory boundary cluster arithmetizes this process.
 This cluster contains \texttt{MemoryGlobalInit}, \texttt{MemoryGlobalFinal},
-\texttt{Global}, and the preprocessed chips.
-Note that when memory initialization/finalization is retained into an extended core cluster (type~2),
-this standalone cluster is not needed (this happens for very small programs so that the proof can
-fit into one shard).
+\texttt{Global}, and the preprocessed chips (\texttt{Program}, \texttt{ByteLookup}, and \texttt{RangeLookup}).
 \end{enumerate}
 
 \begin{figure}
@@ -489,44 +484,39 @@ We group operations as follows:
 \subsection{Correct execution of a single step}
 
 A single step executes the instruction at the current program counter.
-The step predicate selects the matching operation via a disjunction
-over all opcodes:
+The step predicate selects the matching operation from the program code:
 \begin{equation*}\label{eq:step}
-\varphi_{\step}(S_1,S_2):=
-\bigvee_{\op\in \text{operations}} \varphi_{\op}(S_1,S_2)
+\varphi_{\step}(S_1,S_2):= \varphi_{\code[\pc_1]}(S_1,S_2)
 \end{equation*}
 where $S_1$ and $S_2$ are the states before and after the step.
 
 \subsection{Chip interactions and the bus}\label{sec:bus}
 
-Within a shard, chips communicate through a \emph{bus}: a collection of
+Chips communicate through a \emph{bus}: a collection of
 typed messages that chips \emph{send} (produce) and \emph{receive}
 (consume).
-For example, when the execution trace chip encounters a precompile
-call, it sends the call's inputs to the bus; the corresponding
-precompile chip receives those inputs, performs the computation,
-and sends the results back.
 Consistency is enforced by requiring that, for each interaction kind,
 the multiset of sent messages equals the multiset of received messages.
+A structured message sent/received by all rows of a table is termed an \emph{interaction}
 
-SP1 implements this via a \textbf{LogUp argument} (proved via GKR):
-each chip contributes terms $+1/(\alpha - m_i)$ for sends and
-$-1/(\alpha - m_j)$ for receives, where $\alpha$ is a random
-challenge and $m_i, m_j$ are message fingerprints.
-The sum must equal zero, which holds if and only if sends and receives
-match as multisets \rnote{(whp over $\alpha$)}.
+% SP1 implements this multiset equality via a \textbf{LogUp argument} (proved via GKR):
+% each chip contributes terms $+1/(\alpha - m_i)$ for sends and
+% $-1/(\alpha - m_j)$ for receives, where $\alpha$ is a random
+% challenge and $m_i, m_j$ are message fingerprints.
+% The sum must equal zero, which holds if and only if sends and receives
+% match as multisets \rnote{(whp over $\alpha$)}.
 
 Each interaction is declared with one of two \emph{scopes}:
 \begin{itemize}
 \item \textbf{Local} interactions must balance within the shard.
-This is enforced by the LogUp + GKR \rnote{minor but I think either LogUpGKR or LogUp/GKR look nicer} argument inside the shard proof.
+This is enforced by the LogUp/GKR argument inside the shard proof.
 \item \textbf{Global} interactions need not balance within a single
 shard.
 Instead, each shard computes its net contribution
 $\sigma\in E(\mathbb{F})$, a point on a
-degree-7 elliptic curve over the base field (the ``septic curve''),
+elliptic curve defined on a degree-7 extension of the base field
 and outputs it as a public value.
-The contributions are accumulated across all shards during recursion,
+The contributions are accumulated across all shards during recursion (or core proof verification),
 and the final completeness check asserts
 $\sum_i \sigma_i = \mathcal{O}$ (the identity point).
 \end{itemize}
@@ -537,30 +527,36 @@ shards.
 
 \subsection{Memory consistency}\label{sec:memory}
 
-SP1 does \emph{not} use Merkle tree commitments for memory.
-Instead, memory consistency is enforced entirely through the global bus. \rnote{via the memory-checking argument of Blum et al.}
+In SP1, memory consistency is enforced via the memory-checking argument of Blum et al. \cite{Blum}.
+Namely, for each memory read or write, one adds an ($addr$, $value$, $timestamp$) tuple to a write set $WS$
+and a read set $RS$ (for reads the same values are written to both).
+For either read or write, the $addr$ value added to both sets needs to be the same, and the timestamp
+added to $WS$ needs to be later than the one added to $RS$.
+To initialize memory, one adds the initial value of all touched memory to $WS$; similarly,
+one adds the final value of all touched addresses to $RS$.
+Memory consistency is then equivalent to set equality $WS=RS$, together with strict monotonicity of
+the timestamps.
+This argument is used at both the local and global scopes, using the corresponding buses for proving
+equality of sets.
 
-At the beginning of execution, a dedicated
-\texttt{MemoryGlobalInit} chip sends each initial memory cell
-$(addr, value, timestamp)$ into the global bus.
-At the end of execution, a \texttt{MemoryGlobalFinal} chip receives
-the final memory state from the global bus.
-During execution, every load and store instruction interacts with the
-bus: a load receives the current value at the given address
-and sends an updated timestamp; a store receives the old value
-and sends the new value with an updated timestamp.
-
-Because these are global-scope interactions, they accumulate across
-shards via the septic curve.
-The final completeness check ($\sigma = \mathcal{O}$) ensures that
-every memory cell written is eventually read with the correct value,
-and that the initial and final memory states are consistent with the
-full execution.
-
+\paragraph{Local/Intra-Shard Memory Consistency.}
 Within a shard, local memory interactions (via the \texttt{MemoryLocal}
 chip) handle the read/write operations that occur entirely within that
 shard, using the local LogUp argument for consistency.
+It is necessary to pass initial and final memory states into the global bus for all addresses touched
+during the shard's execution. However, even if an address is touched multiple times within the shard,
+it is necessary only to pass its initial and final values into the global bus.
 
+\paragraph{Global/Cross-Shard Memory Consistency.}
+At the beginning of execution, a dedicated chip sends each initial memory cell
+$(addr, value, timestamp)$ into the global bus.
+At the end of execution, another chip receives
+the final memory state from the global bus.
+As mentioned above, each shard also sends its initial and final memory states into the global bus.
+The final global completeness check ($\sigma = \mathcal{O}$) ensures that
+every memory cell written is eventually read with the correct value,
+and that the initial and final memory states are consistent with the
+full execution.
 
 
 \section{Recursion Architecture}\label{sec:proof-arch}
@@ -572,8 +568,9 @@ proofs it is therefore necessary to introduce some form of recursion or proof ag
 In this section, we describe the approach taken by SP1 to address this problem.
 
 It is useful when discussing recursion to set some terminology
-to avoid the confusion caused by ``the recursive nature of recursion'' \rnote{?}.
-First, by a \textbf{recursion program} or \textbf{recursion circuit}, we mean a program or arithmetic cirucit that verifies
+to avoid the confusion caused by the fact that a recursion \emph{prover} is proving the \emph{verifier} of another
+stage of the pipeline.
+First, by a \textbf{recursion program} or \textbf{recursion circuit}, we mean the program or arithmetic cirucit that verifies
 one or more SNARK proofs and also optionally checks some aggregation logic.
 SNARK proofs can typically be verified in the circuit model of computation, so the term ``circuit'' here is suitable.
 Given a recursion circuit $\mathcal C$, when we say a $\mathcal C$ proof, we mean a proof of the correct
@@ -581,7 +578,7 @@ execution of $\mathcal C$.
 Often, the inputs to a recursion circuit are $\mathcal{C}'$ proofs for some other circuit $\mathcal C'$;
 we advise the reader to be aware that the term $\mathcal C$ proof refers to the \emph{output} of proving
 $\mathcal C$.
-Finally, given a collection
+
 
 \subsection{Topology}
 
@@ -597,7 +594,7 @@ The proof parameters for \texttt{shrink} are listed in soundcalc under ``shrink'
 \hline
 % \texttt{core} (many shapes) & Core shard proof & $\relation_{\mathrm{shard}}^{(C)}$ \\
 \texttt{normalize}          & 1-to-1 shape normalization & $\relation_{\mathrm{norm}}$ \\
-\texttt{compose}            & $N$-to-1 aggregation ($1\!\leq\! N\!\leq\! 4$) & $\relation_{\mathrm{compose}}$ \\
+\texttt{compose}            & $N$-to-1 aggregation ($2\!\leq\! N\!\leq\! 4$) & $\relation_{\mathrm{compose}}$ \\
 \texttt{shrink}             & Final proof size reduction & $\relation_{\mathrm{shrink}}$ \\
 \hline
 \end{tabular}
@@ -615,7 +612,7 @@ A 1-to-1 circuit that verifies a single core shard proof. A \texttt{normalize} p
 is always of a fixed shape (which we call \texttt{compress\_shape}), irrespective of
 the input proof's shape (Sec.~\ref{sec:normalize}).
 \item \texttt{compose}:
-An $N$-to-1 recursion circuit ($2\leq N\leq 4$) \rnote{maybe $2 \leq N \leq 4$?} that verifies multiple
+An $N$-to-1 recursion circuit ($2\leq N\leq 4$) that verifies multiple
 proofs of shape \texttt{compress shape} and performs some aggregation logic.
 A \texttt{compose} proof is always a single proof of shape \texttt{compress\_shape}
 (Sec.~\ref{sec:compose}).
@@ -635,9 +632,12 @@ We refer to the \texttt{normalize} and \texttt{compose} layers
 collectively as the ``compress'' stage.
 The compress stage terminates when all proofs have been
 aggregated into a single complete \texttt{compose} proof.
-Finally, this proof is passed to the \texttt{shrink} circuit,
-which re-proves it with reduced FRI parameters to minimize
-proof size before conversion to the outer proof system.
+Finally, this proof is passed to the \texttt{shrink} circuit, which verifies
+the complete \texttt{compose} proof.
+The proving system for the \texttt{shrink} circuit produces smaller proofs
+because it 1) does not normalize the proof to fit \texttt{compress\_shape} and 2) it uses
+more favorable FRI parameters.
+
 
 \begin{figure}
 \centering
@@ -701,46 +701,40 @@ The tree is illustrative; the actual fan-in and depth depend on the
 number of shards.}
 \end{figure}
 
-\paragraph{Programs vs.\ verifiers.}
-Because of recursive proof aggregation, each recursion step acts as both a
-\emph{prover} and a \emph{verifier}: the program executed by the prover
-contains the verifier for the previous step's proof system.
-For example, the \texttt{compose} program contains the compress
-verifier, which verifies \texttt{normalize} and \texttt{compose} proofs.
-In the subsections below, when we say ``the \texttt{compose} circuit
-verifies a proof,'' we mean that the compose \emph{program}
-embeds the compress \emph{verifier} as part of its constraint system.
-
 \paragraph{Verifying key Merkle tree.}
 Each recursion circuit type may have multiple \emph{shapes}---distinct
 circuit configurations that arise from different chip clusters and
-trace dimensions.
-A verifying key $\vk$ is derived for each shape, yielding
-approximately $181{,}000$ distinct keys in total.
+trace dimensions for the circuit inputs.
+Each shape leads to a distinct circuit with its own verifying key $\vk$.
 These keys are organized into a Merkle tree whose root
 $\mathsf{vk\_root}$ is used to authenticate recursion proofs.
+The Merkle proof guarantees that the corresponding recursion proof was of the correct
+execution of \emph{one} of the recursion circuits and not some other, unrelated circuit.
 
 The shapes are enumerated as follows:
 \begin{itemize}
-\item \textbf{Normalize} (the vast majority of leaves):
+\item \textbf{Normalize} (the vast majority of circuits):
 one shape per combination of chip cluster, preprocessed and main
 stacked BaseFold column counts, and padding column counts.
 \item \textbf{Compose}: one shape per arity ($N=2,3,4$).
 \item \textbf{Shrink}: a single shape.
 \end{itemize}
 
-The \texttt{compose} program enforces VK authentication:
+The \texttt{compose} and \texttt{shrink} programs enforces VK authentication:
 it takes Merkle membership proofs for each input proof's verifying key
 as part of its witness, verifies them against the Merkle root, and
 checks that every input proof's $\mathsf{rpv}.\mathsf{vk\_root}$
 equals this root.
+We write $\varphi_{\mathrm{auth}}(\vk, \mathsf{mkl}, \mathsf{vk\_root})$
+for the predicate asserting that $\vk$ is a valid leaf of the Merkle tree
+with root $\mathsf{vk\_root}$, verified via membership proof $\mathsf{mkl}$.
 The \texttt{normalize} program does not perform VK membership
 checks itself; it propagates $\mathsf{vk\_root}$ as a public value,
 which the compose verifier then checks for consistency.
 
 Note that, because of the 1-1 normalization, there truly is exactly one \texttt{compose} circuit for each
 arity.
-If not for the normalization, the number of arity $N$ \texttt{compose} circuits would be $C^N$,
+If not for the normalization, the number of arity $N$ \texttt{compose} circuits would be roughly $C^N$,
 where $C$ is the number of core shard proof shapes.
 
 
@@ -801,7 +795,7 @@ $$\relation_{\mathrm{norm}}=\left\lbrace\begin{array}{c|c}
   ;\;
   (\pi,\,\vk,\,C)
   &
-  \begin{array}{c}
+  \begin{array}{l}
   \Pi_{\mathrm{shard}}^{(C)}.\mathsf{Verify}(\mathsf{pv},\,\pi)=1\\[4pt]
   \mathsf{rpv}.\mathsf{contains\_first\_shard}=1
     \;\Longrightarrow\;
@@ -813,8 +807,7 @@ $$\relation_{\mathrm{norm}}=\left\lbrace\begin{array}{c|c}
       \vk.\sigma_0 & \text{if first shard}\\
       \mathcal{O} & \text{otherwise}
     \end{cases}\\[4pt]
-  \mathsf{rpv}\text{ is correctly derived from }\mathsf{pv},\;\vk,
-    \text{ and auxiliary inputs}\\[4pt]
+  \varphi_{\mathrm{output}}(\mathsf{rpv};\,\mathsf{pv},\,\vk)\\[4pt]
   \mathsf{rpv}.\mathsf{is\_complete}=1
     \;\Longrightarrow\;
     \varphi_{\mathrm{complete}}(\mathsf{rpv})
@@ -822,7 +815,10 @@ $$\relation_{\mathrm{norm}}=\left\lbrace\begin{array}{c|c}
 \end{array}\right\rbrace$$
 where $\varphi_{\mathrm{complete}}$ asserts the final boundary conditions
 described above (program halted, first shard included, initial boundary
-values zero, $\sigma=\mathcal{O}$).
+values zero, $\sigma=\mathcal{O}$),
+and $\varphi_{\mathrm{output}}(\mathsf{rpv};\,\cdot)$ asserts that the output
+recursion public values $\mathsf{rpv}$ are correctly derived from the given
+inputs, including a valid Poseidon-2 digest commitment.
 
 \subsection{\texttt{compose} circuit}\label{sec:compose}
 
@@ -874,13 +870,15 @@ and $\mathsf{rpv}$ for the aggregated output.
 $$\relation_{\mathrm{compose}}=\left\lbrace\begin{array}{c|c}
   \mathsf{rpv}
   ;\;
-  (\{\vk_i,\pi_i\}_{i=1}^{N},\;\mathsf{vk\_root})
+  (\{\vk_i,\pi_i,\mathsf{mkl}_i\}_{i=1}^{N},\;\mathsf{vk\_root})
   &
-  \begin{array}{c}
+  \begin{array}{l}
   \forall\, i:\;
     \Pi_{\mathrm{comp}}.\mathsf{Verify}(\mathsf{rpv}_i,\,\pi_i)=1
     \;\wedge\;
     \mathsf{rpv}_i.\mathsf{vk\_root}=\mathsf{vk\_root}\\[4pt]
+  \forall\, i:\;
+    \varphi_{\mathrm{auth}}(\vk_i,\,\mathsf{mkl}_i,\,\mathsf{vk\_root})\\[4pt]
   \forall\, i<N:\;
     \mathsf{rpv}_i.\mathsf{last\_*}
     = \mathsf{rpv}_{i+1}.\mathsf{prev\_*}\\[4pt]
@@ -889,9 +887,7 @@ $$\relation_{\mathrm{compose}}=\left\lbrace\begin{array}{c|c}
     = \mathsf{rpv}_1.\mathsf{sp1\_vk\_digest}\\[4pt]
   \mathsf{rpv}.\sigma \;=\;
     \textstyle\sum_{i=1}^{N} \mathsf{rpv}_i.\sigma\\[4pt]
-  \mathsf{rpv}\text{ boundary values derived from }
-    \mathsf{rpv}_1.\mathsf{prev\_*}\text{ and }
-    \mathsf{rpv}_N.\mathsf{last\_*}\\[4pt]
+  \varphi_{\mathrm{output}}(\mathsf{rpv};\,\{\mathsf{rpv}_i\}_{i=1}^{N})\\[4pt]
   \mathsf{rpv}.\mathsf{is\_complete}=1
     \;\Longrightarrow\;
     \varphi_{\mathrm{complete}}(\mathsf{rpv})
@@ -959,10 +955,10 @@ $$\relation_{\mathrm{shrink}}=\left\lbrace\begin{array}{c|c}
   &
   \begin{array}{l}
   \Pi_{\mathrm{comp}}.\mathsf{Verify}(\mathsf{rpv}',\,\pi)=1\\[3pt]
-  \vk \text{ verified against } \mathsf{mkl}\\[3pt]
+  \varphi_{\mathrm{auth}}(\vk,\,\mathsf{mkl},\,\mathsf{rpv}'.\mathsf{vk\_root})\\[3pt]
   \mathsf{rpv}'.\mathsf{is\_complete}=1\\[3pt]
   \varphi_{\mathrm{complete}}(\mathsf{rpv}')\\[3pt]
-  \mathsf{rpv}\text{ is correctly derived from }\mathsf{rpv}'
+  \varphi_{\mathrm{output}}(\mathsf{rpv};\,\mathsf{rpv}')
   \end{array}
 \end{array}\right\rbrace$$
 
@@ -987,7 +983,7 @@ The proof of each shard follows a four-step protocol:
 \begin{enumerate}
 \item \textbf{Commit.}
       Treat the unpadded trace data as a single dense multilinear polynomial~$Q$
-      and commit to it via \rnote{(interleaved)} Reed--Solomon encoding and Merkle hashing
+      and commit to it via (interleaved) Reed--Solomon encoding and Merkle hashing
       (Sec.~\ref{sec:trace-commit}).
 \item \textbf{LogUp + GKR.}
       Prove that all local-scope interactions balance
@@ -995,7 +991,7 @@ The proof of each shard follows a four-step protocol:
       The output is a collection of $W$ evaluation claims on individual trace columns,
       all at a single point $\eta$
       (Sec.~\ref{sec:logup-gkr}).
-\item \textbf{Zerocheck + Sumcheck.} \rnote{i sugggest to remove sumcheck from the title}
+\item \textbf{Zerocheck.}
       Prove that every algebraic constraint is satisfied on
       all unpadded rows.
       Batch the constraint zerocheck with the LogUp+GKR opening claims
@@ -1022,6 +1018,9 @@ $W\approx 2^{12}$ columns at 4~bytes each gives
 $4\times 2^{12}\times 2^{22}=2^{36}$ bytes $= 64\,$GB.
 The jagged PCS (Sec.~\ref{sec:jagged}) ensures that both prover and verifier costs
 depend only on the size of the \emph{unpadded} data.
+
+
+We now proceed to describe the above steps in more detail.
 
 \medskip\noindent
 \textbf{Notation.}
@@ -1076,16 +1075,19 @@ each chunk becomes one ``column'' of a dense multilinear polynomial~$Q$.
 There are \texttt{dense\_batch} such chunks in total, so
 $Q$ is a multilinear polynomial in
 $\log_2(\texttt{dense\_length})+\lceil\log_2(\texttt{dense\_batch})\rceil$ variables.
+Alternatively, think of $Q$ as a column-major matrix of height $\texttt{dense\_length}$
+and width \texttt{dense\_batch}.
 
 The prover commits to $Q$ as follows:
 \begin{enumerate}
-\item Interpret each chunk as the evaluations of a univariate polynomial \rnote{not as coefficients? IIRC for basefold we want the coefficient representation + this saves the inverse FFT} of
+\item Interpret each chunk as the coefficients of a univariate polynomial of
       degree $=\texttt{dense\_length}-1$.
 \item Reed--Solomon encode each chunk at rate $\rho=1/\texttt{blowup\_factor}$,
       producing codewords of length
       $\texttt{dense\_length}\times\texttt{blowup\_factor}$.
-\item Hash the encoded columns into a single Merkle tree;
-      the Merkle root constitutes the trace commitment. \rnote{maybe say that the rows are the leaves of the Merkle tree?}
+\item Hash the encoded columns into a single Merkle tree (with the entries of each ;
+      the Merkle root constitutes the trace commitment. The $i$-leaf of the Merkle tree has size
+      \texttt{dense\_batch}, and consists of the $i$-th entry of each codeword.
 \end{enumerate}
 The prover also reports the unpadded height $h_i$ of each table.
 Together with the commitment, these heights fully determine the trace.
@@ -1120,7 +1122,7 @@ The verifier sums the $\kappa$ values across the interactions in the chip cluste
 if the sum is non-zero (the consistency of bus sends and receives is equivalent to this sum being zero).
 
 \paragraph{GKR reduction.} The above fractional sums can be described as the outputs of a circuit of
-depth $n_{row}$; SP1 proves the correctness of this circuit evaluation via the GKR polynomial IOP \rnote{interactive proof, not a PIOP} \cite{DBLP:journals/iacr/PapiniH23}.
+depth $n_{row}$; SP1 proves the correctness of this circuit evaluation via the GKR interactive proof \cite{DBLP:journals/iacr/PapiniH23}.
 
 \paragraph{Output.}
 After $n_{row}$ layers the GKR protocol terminates with evaluation claims on the multilinear extensions
@@ -1171,7 +1173,7 @@ The jagged PCS~\cite{DBLP:journals/iacr/HemoJRRR25} bridges the two representati
 the padded columns.
 The protocol can be described as a sumcheck over a product of multilinears, one of which is $Q$ and
 the other of which can be efficiently evaluated.
-We use the jagged assist (as described in the reference \rnote{missing}) to further reduce verifier work in the evaluation
+We use the jagged assist (as described in the above-mentioned reference) to further reduce verifier work in the evaluation
 of the latter polynomial.
 
 \paragraph{Output.}
