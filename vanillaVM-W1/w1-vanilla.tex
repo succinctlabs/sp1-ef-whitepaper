@@ -115,12 +115,13 @@ For a given instruction $\op$, the predicate $\varphi_{\op}$ has the
 semantics
 \begin{multline}\label{eq:phiop}
 \varphi_{op}(\pc_1,\regs_1,\mem_1,\pc_2,\regs_2,\mem_2)=\mathrm{TRUE} \;\Longleftrightarrow\;\\
- (\pc_1,\regs_1,\mem_1)\xrightarrow{\op} (\pc_2,\regs_2,\mem_2) \wedge \code[\pc_1]=op;
+ (\pc_1,\regs_1,\mem_1)\xrightarrow{\op} (\pc_2,\regs_2,\mem_2) \wedge \code[\pc_1]=op.
 \end{multline}
-in case $op$ is \texttt{ecall},
 
 \section{Segmentation}\label{sec:seg}
-We now explain how execution is split into shards.
+It is typically not possible to prove an entire trace $\TTT$ at once on a single machine; it is therefore necessary to
+split the execution into shards.
+We now explain how SP1 undertakes this splitting.
 
 \subsection{Execution Shards}
 
@@ -251,8 +252,8 @@ After execution, the execution trace $\TTT$ is divided into
 (cf.\ Fig.~\ref{img:trace-seg}).
 Shards are not fixed-size; instead, the executor splits the trace when
 the estimated trace area of the current shard exceeds a
-configurable threshold\footnote{The default element threshold is
-$2^{28}+2^{27}$, and the maximum table height per shard is $2^{22}$.}.
+configurable threshold or more rarely if any one opcode is invoked more than a fixed number of times\footnote{The default element threshold is
+$2^{28}+2^{27}$, and the maximum opcode count is $2^{22}$.}.
 Each shard $\GGG_i$ corresponds to a contiguous subsequence of the
 execution trace, from $S_{\mathrm{start}_i}$ to $S_{\mathrm{end}_i}$,
 and is proven by its own core shard proof.
@@ -293,7 +294,8 @@ $$
 \right\}
 $$
 where $C$ is the chip cluster determining the circuit, $\mathsf{pv}$ are the shard's public values
-(boundary state, digests, etc.), and $\sigma$ is the shard's global cumulative sum.
+(boundary state, digests, etc.), and $\sigma$ is the shard's global cumulative sum\footnote{The proof system
+for this circuit is named ``core'' in \href{https://github.com/ethereum/soundcalc/blob/main/soundcalc/zkvms/sp1/sp1.toml}{soundcalc}}.
 
 The clusters are of four types:
 
@@ -574,6 +576,9 @@ Finally, given a collection
 \subsection{Topology}
 
 The recursion proof pipeline consists of multiple circuit types, summarized in the table below.
+~\footnote{The proof parameters for \texttt{normalize} and \texttt{compose} are the same, so in \href{https://github.com/ethereum/soundcalc/blob/main/soundcalc/zkvms/sp1/sp1.toml}{soundcalc}, they are listed under the name ``compress''.
+The proof parameters for \texttt{shrink} are listed in soundcalc under ``shrink''.
+}
 
 \begin{center}
 \begin{tabular}{lll}
