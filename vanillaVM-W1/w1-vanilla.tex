@@ -32,29 +32,23 @@ guidelines\footnote{\url{https://zkevm.ethereum.foundation/blog/cryptography-res
 SP1 proves execution of RISC-V guest programs using:
 
 \begin{itemize}
-\item Execution of RV64IM programs compiled from ELF binaries
-\item Sharded execution traces with chip-cluster--based segmentation
-\item Specialized constraint systems (``chips'') grouped into clusters
-\item Local bus interactions (LogUp + GKR) within each shard
-\item Global bus interactions across shards (septic curve accumulation)
-\item Hypercube proof system with BaseFold polynomial commitments over the KoalaBear field
-\item Recursive aggregation via normalize / compose / shrink circuits
+\item \hyperref[sec:exec]{Execution of RV64IM programs} encoded as ELF binaries
+\item \hyperref[sec:seg]{Sharded execution traces} with segmentation logic by trace area estimation.
+\item Specialized computational units at the arithmetization layer called \hyperref[sec:core]{``chips''}, whose constraints
+enforce correct execution of RISC-V instructions and cryptographic operations.
+\item \hyperref[sec:bus]{Local bus interactions} (LogUp + GKR) for inter-chip communication within each shard.
+\item \hyperref[sec:memory]{Global bus interactions} across shards (with septic curve accumulation).
+\item A multilinear \hyperref[sec:proof-system]{proof system} (``Hypercube'') with BaseFold polynomial commitments over the KoalaBear field.
+\item \hyperref[sec:proof-arch]{Recursive aggregation} via normalize / compose / shrink circuits
 \end{itemize}
 
-After execution, the trace is partitioned into \emph{shards}, each corresponding to a chip cluster instance.
-Every shard is proven independently, producing a core shard proof.
-These proofs are then normalized to a fixed shape and recursively aggregated until a single proof attests to the correctness of the entire program execution.
-
-\section{Execution Model}
+\section{Execution Model}\label{sec:exec}
 We define how a program is executed.
 
 \subsection{Program, Execution, and VM State}
 
 A \textbf{program} $\PPP$ is a RISC-V ELF binary targeting the RV64IM
 instruction set (64-bit base integer with multiply/divide extension).
-Its inputs $\III$ are derived from the Ethereum state (\emph{initial state})
-and the execution witness $\WWW$,
-and its outputs $\OOO$ are the final Ethereum state (\emph{final state}).
 
 The program $\PPP$ operates on the \textbf{VM state} $S$, defined as:
 \begin{itemize}
@@ -73,7 +67,7 @@ S:=(\pc_1,\regs_1,\mem_1)\xrightarrow{\op:=\code[\pc_1]} S':=(\pc_2,\regs_2,\mem
 \end{equation}
 For example, if $\op$ is an addition instruction, which adds the first two registers and stores in the third register, then the semantics of the step is defined as
 \begin{align}
-\pc_2&=\pc_1+1,\\
+\pc_2&=\pc_1+4,\\
 \regs_2&=\regs_1\text{ except that } \regs_2[2]:=\regs_1[0]+\regs_1[1],\\
 \mem_2&=\mem_1.
 \end{align}
@@ -89,40 +83,31 @@ An \textbf{execution trace} for program $\code$ applied to inputs $\III$ is a se
 where each step corresponds to execution of one instruction.
 
 
-A \textbf{zkVM proof} for $(\PPP,\EE,\EE')$,
-where $\EE$ and $\EE'$ are the initial and final Ethereum states, is a SNARK that proves the following:
-$$
-\begin{cases}
-S_0\rightarrow\cdots\rightarrow S_T;\\
-S_0:=(\pc_0:=0,\regs,\mem)\text{ where $\regs,\mem$ are derived from }\EE;\\
-S_T:=(\pc_T,\regs',\mem')\text{ where $\regs',\mem'$ are derived from }\EE';\\
-\end{cases}
-$$
+A \textbf{zkVM proof} for $\PPP$ and initial state $S_0$ is a proof of the existence of an execution
+trace $\TTT$ as above with $S_0$ as the initial state.
 
-\subsection{Supported Instructions}
+\paragraph{Supported Instructions.}
 SP1 supports the full RV64IM instruction
 set\footnote{\url{https://riscv.org/technical/specifications/}}:
 the base 64-bit integer instructions (I) and the integer
 multiply/divide extension (M).
+
+\paragraph{Execution Environment.}
 Additionally, SP1 provides \emph{precompiles}---accelerated
 implementations of expensive operations---invoked via the RISC-V
 \texttt{ecall} instruction with a syscall code in register \texttt{t0}.
 
-The precompiles include:
+The precompiles include standard system-level ecalls---halt, I/O (write, hint read/len, commit), commit---
+as well as the following accelerated cryptographic operations
+(we include here only the precompiles relevant to the ethereum proving usecase):
 \begin{itemize}
 \item \textbf{Hash functions:} SHA-256 (extend + compress), Keccak-256
   permutation, Poseidon2.
 \item \textbf{Elliptic curve operations:} point addition, doubling, and
-  decompression for Ed25519, Secp256k1, Secp256r1, BN-254, and
-  BLS12-381.
-\item \textbf{Field arithmetic:} $\mathbb{F}_p$ and $\mathbb{F}_{p^2}$
-  add/sub/mul for BN-254 and BLS12-381.
-\item \textbf{Big-integer arithmetic:} 256-bit multiply, 256-bit
-  add/multiply with carry, $256\times 2048$-bit multiply.
-\item \textbf{System:} halt, I/O (write, hint read/len), commit,
-  deferred proof verification, memory protection.
+  decompression for Secp256k1, Secp256r1, and BN-254.
 \end{itemize}
 
+\paragraph{Predicates.}
 For our purpose the exact semantics of each instruction is not
 important; we treat them as black boxes with predicates modeling
 correctness.
@@ -130,11 +115,11 @@ For a given instruction $\op$, the predicate $\varphi_{\op}$ has the
 semantics
 \begin{multline}\label{eq:phiop}
 \varphi_{op}(\pc_1,\regs_1,\mem_1,\pc_2,\regs_2,\mem_2)=\mathrm{TRUE} \;\Longleftrightarrow\;\\
- (\pc_1,\regs_1,\mem_1)\xrightarrow{\op} (\pc_2,\regs_2,\mem_2) \wedge \code[\pc_1]=op
+ (\pc_1,\regs_1,\mem_1)\xrightarrow{\op} (\pc_2,\regs_2,\mem_2) \wedge \code[\pc_1]=op;
 \end{multline}
+in case $op$ is \texttt{ecall},
 
-
-\section{Segmentation}
+\section{Segmentation}\label{sec:seg}
 We now explain how execution is split into shards.
 
 \subsection{Execution Shards}
@@ -280,7 +265,7 @@ $$
 S_{\mathrm{end}_i} = S_{\mathrm{start}_{i+1}}\text{ for all }i\in[m-1],\quad S_{\mathrm{start}_1}=S_0,\quad S_{\mathrm{end}_m}=S_T.
 $$
 
-\subsection{Shard layout}
+\subsection{Shard layout}\label{sec:core}
 
 Each shard is proven by a \emph{chip cluster}---a collection of
 chips (specialized constraint systems) that are included together in a
@@ -289,27 +274,75 @@ The cluster determines which chips are present and thus the circuit
 shape.
 Within a shard, each chip produces a table of field elements
 with algebraic constraints on its columns.
-The full list of chip cluster types and their contents is given in
-Section~\ref{sec:core}.
-
-At a high level, every shard includes:
-\begin{itemize}
-\item An \textbf{execution trace chip} containing the RISC-V
-  instruction steps, register accesses, and control flow for the
-  shard's portion of execution.
-\item \textbf{Precompile chips} for any accelerated operations invoked
-  during the shard (e.g., SHA-256, Keccak, elliptic curve operations).
-  Depending on cost, a precompile may be included in the same cluster
-  as the execution trace or deferred to its own shard
-  (Section~\ref{sec:core}).
-\item \textbf{Infrastructure chips} for lookups (byte, range),
-  memory state, timestamp management, syscall dispatch, and the global
-  bus accumulator.
-\end{itemize}
-
-Consistency between chips within a shard is enforced by a \emph{bus}:
+Consistency between chips is enforced by a \emph{bus}:
 a LogUp interaction argument (proved via GKR) that checks that all
 ``send'' and ``receive'' messages across chips balance within the shard.
+All inter-shard communication passes through the global
+accumulation bus, arithmetized as a \texttt{Global} table present in all shards.
+
+Each shard proof attests to the relation
+$$
+\relation_{\mathrm{shard}}^{(C)} \;=\; \left\{
+\left((\mathsf{pv},\sigma);\; \mathsf{trace}\right) \;\Bigg|\;
+\begin{array}{c}
+\text{All chip constraints in cluster $C$ are satisfied}\\
+\text{All local-scope bus interactions balance (via LogUp)}\\
+\sigma \text{ is the correct global cumulative sum}\\
+\text{Public values $\mathsf{pv}$ are consistent with the trace}
+\end{array}
+\right\}
+$$
+where $C$ is the chip cluster determining the circuit, $\mathsf{pv}$ are the shard's public values
+(boundary state, digests, etc.), and $\sigma$ is the shard's global cumulative sum.
+
+The clusters are of four types:
+
+\begin{enumerate}
+\item \textbf{Base core cluster} (\texttt{core}).
+Contains all RISC-V instruction chips (ALU, memory load/store, control flow, etc.)
+together with infrastructure chips: \texttt{Program} (instruction lookup),
+\texttt{ByteLookup} and \texttt{RangeLookup} (preprocessed lookup tables),
+\texttt{MemoryLocal} (local memory state),
+\texttt{MemoryBump} and \texttt{StateBump} (timestamp management),
+\texttt{SyscallCore}, \texttt{SyscallInstrs} (syscall dispatch),
+and \texttt{Global} (global bus accumulator).
+
+\item \textbf{Extended core clusters} (\texttt{core+}$P$).
+Some precompiles are compact enough to be retained in the core cluster,
+avoiding the overhead of a separate shard proof and allowing communication
+with their calling context via the local lookup argument.
+The retainable extensions are:
+\texttt{MemoryGlobalInit}/\texttt{MemoryGlobalFinal},
+\texttt{Bls12381Fp}, \texttt{Bn254Fp},
+\texttt{Sha256\{Extend,Compress\}} (with their control chips),
+\texttt{Uint256Ops}, and \texttt{Poseidon2}.
+Extended clusters are generated for subsets of size 0, 1, or all of these extensions,
+plus one additional combination (\texttt{core} + memory global + SHA-256 + \texttt{Uint256Ops}).
+
+\item \textbf{Deferred precompile clusters} (\texttt{precompile-}$P$).
+Precompiles with high arithmetization costs (in terms of number of columns
+in the arithmetization) are proved in their own shards. Each such cluster contains
+the precompile-specific chip(s) together with a base set of infrastructure chips:
+\texttt{Program}, \texttt{ByteLookup}, \texttt{RangeLookup},
+\texttt{SyscallPrecompile}, \texttt{MemoryLocal}, and \texttt{Global}.
+They communicate with their RISC-V calling context
+via the global lookup argument.
+The deferred precompiles include:
+elliptic curve operations (Ed25519, Secp256k1, Secp256r1, BN-254, BLS12-381 point add/double),
+field arithmetic (BLS12-381 and BN-254 $\mathbb{F}_p$/$\mathbb{F}_{p^2}$ operations),
+hash functions (Keccak permutation, SHA-256, Poseidon2),
+and big-integer arithmetic (\texttt{Uint256Mul}, \texttt{Uint256Ops}).
+
+\item \textbf{Memory boundary cluster} (\texttt{mem-boundary}).
+The global memory argument requires initialization and
+finalization: sending the initial memory state into the global bus and receiving the final memory state
+from the global bus.
+This cluster contains \texttt{MemoryGlobalInit}, \texttt{MemoryGlobalFinal},
+\texttt{Global}, and the preprocessed chips.
+Note that when memory initialization/finalization is retained into an extended core cluster (type~2),
+this standalone cluster is not needed (this happens for very small programs so that the proof can
+fit into one shard).
+\end{enumerate}
 
 \begin{figure}
 \centering
@@ -689,94 +722,6 @@ Note that, because of the 1-1 normalization, there truly is exactly one \texttt{
 arity.
 If not for the normalization, the number of arity $N$ \texttt{compose} circuits would be $C^N$,
 where $C$ is the number of core shard proof shapes.
-
-\subsection{\texttt{core} circuits}\label{sec:core}
-
-To optimize the proof size and prover time,
-we introduce core shard circuits that prove
-the correctness of RISC-V execution and precompile execution.
-
-The circuits are determined by a ``chip cluster,'' i.e.\ a collection of chips that are proved together
-in a single shard.  All inter-shard communication is enabled by passing messages through the global
-accumulation bus, which is arithmetized as a \texttt{Global} table present in all shards.
-
-Each chip declares interactions with two possible scopes:
-\begin{itemize}
-\item \textbf{Local} interactions must balance within the shard.
-This is enforced by a LogUp argument (proved via GKR) inside the shard proof.
-\item \textbf{Global} interactions need not balance within a single shard.
-Instead, each shard computes its net contribution $\sigma\in E(\mathbb{F})$, a point on a
-degree-7 elliptic curve over the base field (the ``septic curve''), and outputs it
-as a public value.
-The contributions are accumulated across all shards during recursion, and the final
-completeness check asserts $\sum_i \sigma_i = \mathcal{O}$ (the identity point).
-\end{itemize}
-
-Each shard proof attests to the relation
-$$
-\relation_{\mathrm{shard}}^{(C)} \;=\; \left\{
-\left((\mathsf{pv},\sigma);\; \mathsf{trace}\right) \;\Bigg|\;
-\begin{array}{c}
-\text{All chip constraints in cluster $C$ are satisfied}\\
-\text{All local-scope bus interactions balance (via LogUp)}\\
-\sigma \text{ is the correct global cumulative sum for the global-scope interactions}\\
-\text{Public values $\mathsf{pv}$ are consistent with the trace}
-\end{array}
-\right\}
-$$
-where $C$ is the chip cluster determining the circuit, $\mathsf{pv}$ are the shard's public values
-(boundary state, digests, etc.), and $\sigma$ is the shard's global cumulative sum.
-
-The clusters are of 4 types:
-
-\begin{enumerate}
-\item \textbf{Base core cluster} (\texttt{core}).
-Contains all RISC-V instruction chips (ALU, memory load/store, control flow, etc.)
-together with infrastructure chips: \texttt{Program} (instruction lookup),
-\texttt{ByteLookup} and \texttt{RangeLookup} (preprocessed lookup tables),
-\texttt{MemoryLocal} (local memory state),
-\texttt{MemoryBump} and \texttt{StateBump} (timestamp management),
-\texttt{SyscallCore}, \texttt{SyscallInstrs} (syscall dispatch),
-and \texttt{Global} (global bus accumulator).
-
-\item \textbf{Extended core clusters} (\texttt{core+}$P$).
-Some precompiles are compact enough to be retained in the core cluster,
-avoiding the overhead of a separate shard proof and allowing communication
-with their calling context via the local lookup argument.
-The retainable extensions are:
-\texttt{MemoryGlobalInit}/\texttt{MemoryGlobalFinal},
-\texttt{Bls12381Fp}, \texttt{Bn254Fp},
-\texttt{Sha256\{Extend,Compress\}} (with their control chips),
-\texttt{Uint256Ops}, and \texttt{Poseidon2}.
-Extended clusters are generated for subsets of size 0, 1, or all of these extensions,
-plus one additional combination (\texttt{core} + memory global + SHA-256 + \texttt{Uint256Ops}).
-
-\item \textbf{Deferred precompile clusters} (\texttt{precompile-}$P$).
-Precompiles with high arithmetization costs (in terms of number of columns
-in the arithmetization) are proved in their own shards. Each such cluster contains
-the precompile-specific chip(s) together with a base set of infrastructure chips:
-\texttt{Program}, \texttt{ByteLookup}, \texttt{RangeLookup},
-\texttt{SyscallPrecompile}, \texttt{MemoryLocal}, and \texttt{Global}.
-They communicate with their RISC-V calling context
-via the global lookup argument.
-The deferred precompiles include:
-elliptic curve operations (Ed25519, Secp256k1, Secp256r1, BN-254, BLS12-381 point add/double),
-field arithmetic (BLS12-381 and BN-254 $\mathbb{F}_p$/$\mathbb{F}_{p^2}$ operations),
-hash functions (Keccak permutation, SHA-256, Poseidon2),
-and big-integer arithmetic (\texttt{Uint256Mul}, \texttt{Uint256Ops}).
-
-\item \textbf{Memory boundary cluster} (\texttt{mem-boundary}).
-The global memory argument requires initialization and
-finalization: sending the initial memory state into the global bus and receiving the final memory state
-from the global bus.
-This cluster contains \texttt{MemoryGlobalInit}, \texttt{MemoryGlobalFinal},
-\texttt{Global}, and the preprocessed chips.
-Note that when memory initialization/finalization is retained into an extended core cluster (type~2),
-this standalone cluster is not needed (this happens for very small programs so that the proof can
-fit into one shard).
-\end{enumerate}
-
-
 
 
 
