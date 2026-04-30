@@ -125,128 +125,6 @@ To facilitate efficient proving of large computations, SP1 splits the execution 
 
 \subsection{Execution Shards}
 
-\begin{figure}
-\centering
-\resizebox{\textwidth}{!}{%
-\begin{tikzpicture}[y=-1cm]
-  % Colors
-  \definecolor{alucol}{RGB}{195,195,235}
-  \definecolor{memcol}{RGB}{185,225,185}
-  \definecolor{hashcol}{RGB}{205,205,205}
-  \definecolor{poscol}{RGB}{245,215,175}
-  \definecolor{retcol}{RGB}{240,240,240}
-  \definecolor{codecol}{RGB}{235,190,190}
-  \definecolor{inputcol}{RGB}{190,230,190}
-  \definecolor{statecol}{RGB}{255,255,100}
-  %
-  \def\rh{0.38}
-  \def\bw{3.8cm}
-  %
-  \tikzset{
-    ibox/.style={draw, thin, minimum height=\rh cm, text width=\bw, inner sep=1.5pt,
-                 anchor=north west, font=\footnotesize\sffamily},
-    sbox/.style={draw, thin, rounded corners=3pt, fill=statecol, minimum height=0.38cm,
-                 text width=\bw, align=center, inner sep=1.5pt, font=\footnotesize\sffamily,
-                 anchor=north},
-    tbox/.style={draw, thin, rounded corners=2pt, minimum height=0.75cm, inner sep=3pt,
-                 font=\footnotesize\sffamily, align=center, anchor=north west},
-    seglabel/.style={font=\small, anchor=west},
-  }
-  %
-  %%% LEFT SIDE %%%
-  \node[anchor=north west, font=\small\bfseries] at (0, 0) {Program state and execution trace};
-  %
-  % Top boxes
-  \node[tbox, fill=codecol, text width=1.1cm] at (0.1, 0.5) {Program\\[-2pt]code};
-  \node[tbox, fill=inputcol, text width=1.2cm] at (1.7, 0.5) {Program\\[-2pt]inputs};
-  \node[tbox, fill=statecol, text width=2.0cm] at (3.3, 0.5) {Initial memory and\\[-2pt]registers};
-  %
-  % Left instruction list (18 rows)
-  \def\ly{1.85}
-  \def\lx{1.3}
-  \foreach \n/\txt/\col in {
-    0/{+}/alucol, 1/{-}/alucol, 2/{Exp}/alucol,
-    3/{Read(x)}/memcol, 4/{Write(x)}/memcol, 5/{Read(z)}/memcol,
-    6/{Keccak}/hashcol, 7/{=}/alucol, 8/{Read(z)}/memcol,
-    9/{Poseidon}/poscol, 10/{=}/alucol, 11/{Poseidon}/poscol,
-    12/{Keccak}/hashcol, 13/{Read(w)}/memcol,
-    14/{\textgreater\textgreater}/alucol, 15/{Write(w)}/memcol,
-    16/{=}/alucol, 17/{Return}/retcol%
-  } {
-    \node[ibox, fill=\col] at (\lx, {\ly+\n*\rh}) {\txt};
-  }
-  %
-  % Bottom boxes
-  \node[tbox, fill=inputcol, text width=1.3cm] at (0.1, {\ly+18*\rh+0.3}) {\raggedright Program\\[-2pt]outputs};
-  \node[tbox, fill=statecol, text width=2.6cm] at (1.9, {\ly+18*\rh+0.3}) {Final memory and\\[-2pt]registers};
-  %
-  %%% RIGHT SIDE %%%
-  \def\rx{8.2}
-  \pgfmathsetmacro{\rcx}{\rx + 1.953}
-  %
-  \node[anchor=north west, font=\small\bfseries] at (7.2, 0) {Trace after segmentation};
-  %
-  % --- Segment 1 ---
-  \def\startY{0.72}
-  \node[sbox] at (\rcx, \startY) {Program start state};
-  %
-  \pgfmathsetmacro{\segAy}{\startY + 0.48}
-  \foreach \n/\txt/\col in {
-    0/{+}/alucol, 1/{-}/alucol, 2/{Exp}/alucol,
-    3/{Read(x)}/memcol, 4/{Write(x)}/memcol, 5/{Read(z)}/memcol%
-  } {
-    \node[ibox, fill=\col] at (\rx, {\segAy+\n*\rh}) {\txt};
-  }
-  %
-  \pgfmathsetmacro{\segAtop}{\startY - 0.1}
-  \pgfmathsetmacro{\segAbot}{\segAy + 6*\rh + 0.04}
-  \draw[thin] ({\rx-0.2}, \segAtop) rectangle ({\rx+3.8+0.11+0.2}, \segAbot);
-  \node[seglabel] at ({\rx+3.8+0.11+0.4}, {(\segAtop+\segAbot)/2}) {Segment 1};
-  %
-  % --- Cross-segment state 1 ---
-  \pgfmathsetmacro{\isAy}{\segAbot + 0.14}
-  \node[sbox] at (\rcx, \isAy) {Cross-segment state};
-  %
-  % --- Segment 2 ---
-  \pgfmathsetmacro{\segBy}{\isAy + 0.58}
-  \foreach \n/\txt/\col in {
-    0/{Keccak}/hashcol, 1/{=}/alucol, 2/{Read(z)}/memcol,
-    3/{Poseidon}/poscol, 4/{=}/alucol, 5/{Poseidon}/poscol%
-  } {
-    \node[ibox, fill=\col] at (\rx, {\segBy+\n*\rh}) {\txt};
-  }
-  %
-  \pgfmathsetmacro{\segBtop}{\segBy - 0.1}
-  \pgfmathsetmacro{\segBbot}{\segBy + 6*\rh + 0.04}
-  \draw[thin] ({\rx-0.2}, \segBtop) rectangle ({\rx+3.8+0.11+0.2}, \segBbot);
-  \node[seglabel] at ({\rx+3.8+0.11+0.4}, {(\segBtop+\segBbot)/2}) {Segment 2};
-  %
-  % --- Cross-segment state 2 ---
-  \pgfmathsetmacro{\isBy}{\segBbot + 0.14}
-  \node[sbox] at (\rcx, \isBy) {Cross-segment state};
-  %
-  % --- Segment 3 ---
-  \pgfmathsetmacro{\segCy}{\isBy + 0.58}
-  \foreach \n/\txt/\col in {
-    0/{Keccak}/hashcol, 1/{Read(w)}/memcol,
-    2/{\textgreater\textgreater}/alucol, 3/{Write(w)}/memcol,
-    4/{=}/alucol, 5/{Return}/retcol%
-  } {
-    \node[ibox, fill=\col] at (\rx, {\segCy+\n*\rh}) {\txt};
-  }
-  %
-  \pgfmathsetmacro{\finalY}{\segCy + 6*\rh + 0.05}
-  \node[sbox] at (\rcx, \finalY) {Final state};
-  %
-  \pgfmathsetmacro{\segCtop}{\segCy - 0.1}
-  \pgfmathsetmacro{\segCbot}{\finalY + 0.42}
-  \draw[thin] ({\rx-0.2}, \segCtop) rectangle ({\rx+3.8+0.11+0.2}, \segCbot);
-  \node[seglabel] at ({\rx+3.8+0.11+0.4}, {(\segCtop+\segCbot)/2}) {Segment 3};
-\end{tikzpicture}%
-}
-\caption{Segmentation of the execution trace into 3 segments }\label{img:trace-seg}
-\end{figure}
-
 After execution, the execution trace $\TTT$ is divided into
 \emph{execution shards} $\GGG_1,\GGG_2,\ldots,\GGG_m$
 (cf.\ Fig.~\ref{img:trace-seg}).
@@ -353,99 +231,63 @@ This cluster contains \texttt{MemoryGlobalInit}, \texttt{MemoryGlobalFinal},
 
 \begin{figure}
 \centering
-\resizebox{0.65\textwidth}{!}{%
+\resizebox{0.75\textwidth}{!}{%
 \begin{tikzpicture}[y=-1cm]
   % Colors
   \definecolor{alucol}{RGB}{195,195,235}
   \definecolor{memcol}{RGB}{185,225,185}
   \definecolor{hashcol}{RGB}{205,205,205}
   \definecolor{poscol}{RGB}{245,215,175}
-  \definecolor{statecol}{RGB}{255,255,100}
   \definecolor{buscol}{RGB}{255,195,115}
-  %
-  \def\rh{0.46}
+  \definecolor{globalcol}{RGB}{180,220,255}
   %
   \tikzset{
-    ibox/.style={draw, thin, minimum height=\rh cm, text width=3.2cm, inner sep=2pt,
-                 anchor=north west, font=\footnotesize\sffamily},
-    chip/.style={draw, thick, rounded corners=4pt, minimum width=2.6cm, minimum height=0.8cm,
+    chip/.style={draw, thick, rounded corners=4pt, minimum width=2.2cm, minimum height=0.7cm,
                  font=\footnotesize\sffamily\bfseries, align=center},
-    sbar/.style={draw, thin, rounded corners=2pt, fill=statecol,
-                 minimum height=0.42cm, minimum width=10.2cm,
-                 font=\footnotesize\sffamily},
+    busbar/.style={draw, thick, rounded corners=3pt,
+                 minimum height=0.5cm, font=\footnotesize\sffamily\bfseries},
   }
   %
-  % Layout constants
-  \def\tx{0.4}     % trace x
-  \def\trw{3.34}   % trace box total width (3.2 text + 0.14 inner sep)
-  \def\busx{5.2}   % bus x (shifted right for arrow space)
-  \def\busw{1.2}   % bus width
-  \def\ty{1.25}    % trace y start
-  \def\bsy{2.0}    % bus start y (shorter than trace)
+  % === SHARD BOX ===
+  \draw[semithick, rounded corners=6pt] (0, 0) rectangle (11.5, 5.2);
+  \node[font=\small\sffamily\bfseries, anchor=north west] at (0.15, 0.15) {Shard};
   %
-  % === BIG ENCLOSING BOX ===
-  \draw[semithick, rounded corners=6pt] (0, 0) rectangle (10.8, 5.7);
+  % === TOP ROW OF CHIPS ===
+  \node[chip, fill=alucol!70] (alu) at (1.8, 1.2) {\texttt{Add}};
+  \node[chip, fill=memcol!70] (mem) at (4.5, 1.2) {\texttt{MemoryLocal}};
+  \node[chip, fill=alucol!70] (ctrl) at (7.2, 1.2) {\texttt{JALR}};
+  \node[chip, fill=hashcol!50] (prog) at (9.9, 1.2) {\texttt{Program}};
   %
-  % === INITIAL STATE BAR ===
-  \node[sbar] at (5.4, 0.35) {Initial segment state};
+  % === LOCAL BUS ===
+  \node[busbar, fill=buscol, minimum width=10.5cm] (lbus) at (5.75, 2.7) {Local Bus};
   %
-  % === COLUMN LABELS ===
-  \node[font=\footnotesize\sffamily\bfseries] at (2.15, 0.88) {Segment Trace};
-  \node[font=\footnotesize\sffamily\bfseries] at ({\busx + \busw/2}, 0.88) {Bus};
+  % === BOTTOM ROW OF CHIPS ===
+  \node[chip, fill=hashcol!70] (keccak) at (1.8, 4.0) {\texttt{Keccak}};
+  \node[chip, fill=memcol!70] (memloc) at (4.5, 4.0) {\texttt{SHA256Compress}};
+  \node[chip, fill=cyan!30] (range) at (7.2, 4.0) {\texttt{RangeCheck}};
+  \node[chip, fill=globalcol] (global) at (9.9, 4.0) {\texttt{Global}};
   %
-  % === INSTRUCTION ROWS (color-coded by chip affiliation) ===
-  \foreach \n/\txt/\col in {
-    0/{+}/alucol,
-    1/{Keccak}/hashcol,
-    2/{=}/alucol,
-    3/{Read(z)}/memcol,
-    4/{Poseidon}/poscol,
-    5/{=}/alucol,
-    6/{Poseidon}/poscol,
-    7/{Exp}/alucol%
-  } {
-    \node[ibox, fill=\col] at (\tx, {\ty+\n*\rh}) {\txt};
-  }
+  % === ARROWS: TOP CHIPS <-> LOCAL BUS ===
+  \draw[<->, thick] (alu.south) -- (alu.south |- lbus.north);
+  \draw[<->, thick] (mem.south) -- (mem.south |- lbus.north);
+  \draw[<->, thick] (ctrl.south) -- (ctrl.south |- lbus.north);
+  \draw[<->, thick] (prog.south) -- (prog.south |- lbus.north);
   %
-  % === BUS COLUMN (only precompile/range-check entries, colored by chip) ===
-  % 4 cells: Keccak, Poseidon, Poseidon, Range check
-  \fill[hashcol]  (\busx, \bsy) rectangle ({\busx+\busw}, {\bsy+\rh});
-  \fill[poscol]   (\busx, {\bsy+\rh}) rectangle ({\busx+\busw}, {\bsy+2*\rh});
-  \fill[poscol]   (\busx, {\bsy+2*\rh}) rectangle ({\busx+\busw}, {\bsy+3*\rh});
-  \fill[cyan!20]  (\busx, {\bsy+3*\rh}) rectangle ({\busx+\busw}, {\bsy+4*\rh});
-  % Grid
-  \draw[thin] (\busx, \bsy) rectangle ({\busx+\busw}, {\bsy+4*\rh});
-  \foreach \n in {1,2,3} {
-    \draw[thin, black!25] (\busx, {\bsy+\n*\rh}) -- ({\busx+\busw}, {\bsy+\n*\rh});
-  }
+  % === ARROWS: BOTTOM CHIPS <-> LOCAL BUS ===
+  \draw[<->, thick] (keccak.north) -- (keccak.north |- lbus.south);
+  \draw[<->, thick] (memloc.north) -- (memloc.north |- lbus.south);
+  \draw[<->, thick] (range.north) -- (range.north |- lbus.south);
+  \draw[<->, thick] (global.north) -- (global.north |- lbus.south);
   %
-  % === ARROWS: TRACE → BUS ===
-  \pgfmathsetmacro{\trR}{\tx + \trw}  % trace right edge
-  % Keccak (trace row 1) → bus cell 0
-  \draw[->, thick, hashcol!70!black] (\trR, {\ty+1*\rh+\rh/2}) -- (\busx, {\bsy+\rh/2});
-  % Poseidon (trace row 4) → bus cell 1
-  \draw[->, thick, poscol!70!black] (\trR, {\ty+4*\rh+\rh/2}) -- (\busx, {\bsy+\rh+\rh/2});
-  % Poseidon (trace row 6) → bus cell 2
-  \draw[->, thick, poscol!70!black] (\trR, {\ty+6*\rh+\rh/2}) -- (\busx, {\bsy+2*\rh+\rh/2});
-  % Exp/range check (trace row 7) → bus cell 3
-  \draw[->, thick, cyan!70!black] (\trR, {\ty+7*\rh+\rh/2}) -- (\busx, {\bsy+3*\rh+\rh/2});
+  % === GLOBAL BUS ===
+  \node[busbar, fill=globalcol!70, minimum width=11.5cm] (gbus) at (5.75, 6.4) {Global Bus};
   %
-  % === FINAL STATE BAR ===
-  \node[sbar] at (5.4, 5.3) {Final segment state};
-  %
-  % === CHIP BOXES (spread across full trace height) ===
-  \node[chip, fill=hashcol!70] (sha3chip) at (8.9, 1.7) {Keccak chip};
-  \node[chip, fill=poscol!70] (poschip) at (8.9, 3.1) {Poseidon chip};
-  \node[chip, fill=cyan!20] (rangechip) at (8.9, 4.5) {Range check chip};
-  %
-  % === ARROWS: BUS → CHIPS (bidirectional) ===
-  \draw[<->, thick] ({\busx+\busw}, {\bsy+\rh/2}) -- (sha3chip.west);
-  \draw[<->, thick] ({\busx+\busw}, {\bsy+2*\rh}) -- (poschip.west);
-  \draw[<->, thick] ({\busx+\busw}, {\bsy+3*\rh+\rh/2}) -- (rangechip.west);
+  % === ARROW: SHARD → GLOBAL BUS ===
+  \draw[<->, very thick] (5.75, 5.2) -- (gbus.north);
   %
 \end{tikzpicture}%
 }
-\caption{Segment structure: segment trace connects to the bus which then connects to chips.}\label{img:segments}
+\caption{Shard structure: chips communicate via the local bus within a shard, and each shard interacts with the global bus.}\label{img:segments}
 \end{figure}
 
 \section{Correct execution of a program}
@@ -579,6 +421,13 @@ Often, the inputs to a recursion circuit are $\mathcal{C}'$ proofs for some othe
 we advise the reader to be aware that the term $\mathcal C$ proof refers to the \emph{output} of proving
 $\mathcal C$.
 
+\paragraph{Proving recursion circuits.}  The recursion prover, like the core prover, arithmetizes
+the computation into a ``chips and bus'' architecture; unlike the core prover, there is no need for
+cross-shard communication (a single circuit proof fits comfortably into one proving shard), and therefore
+no global bus. The chips used for proving recursion circuits include a \texttt{Poseidon2} chip for proving
+Poseidon2 hashes, KoalaBear field arithmetic tables, and other operations performed in bulk by the Hypercube
+proof system's verifier.
+
 
 \subsection{Topology}
 
@@ -635,7 +484,7 @@ aggregated into a single complete \texttt{compose} proof.
 Finally, this proof is passed to the \texttt{shrink} circuit, which verifies
 the complete \texttt{compose} proof.
 The proving system for the \texttt{shrink} circuit produces smaller proofs
-because it 1) does not normalize the proof to fit \texttt{compress\_shape} and 2) it uses
+because it 1) does not normalize its proof to fit \texttt{compress\_shape} and 2) it uses
 more favorable FRI parameters.
 
 
@@ -720,17 +569,17 @@ stacked BaseFold column counts, and padding column counts.
 \item \textbf{Shrink}: a single shape.
 \end{itemize}
 
-The \texttt{compose} and \texttt{shrink} programs enforces VK authentication:
-it takes Merkle membership proofs for each input proof's verifying key
-as part of its witness, verifies them against the Merkle root, and
-checks that every input proof's $\mathsf{rpv}.\mathsf{vk\_root}$
+The \texttt{compose} and \texttt{shrink} programs enforce VK authentication:
+they takes Merkle membership proofs for each input proof's verifying key
+as part of their witness, verify them against the Merkle root, and
+check that every input proof's $\mathsf{rpv}.\mathsf{vk\_root}$
 equals this root.
 We write $\varphi_{\mathrm{auth}}(\vk, \mathsf{mkl}, \mathsf{vk\_root})$
 for the predicate asserting that $\vk$ is a valid leaf of the Merkle tree
 with root $\mathsf{vk\_root}$, verified via membership proof $\mathsf{mkl}$.
 The \texttt{normalize} program does not perform VK membership
-checks itself; it propagates $\mathsf{vk\_root}$ as a public value,
-which the compose verifier then checks for consistency.
+checks itself; a \emph{consumer} of a \texttt{normalize} proof (typically the \texttt{compose} circuit, also possibly the Rust verifier
+of the proof) does, however, need to check the correctness of the \texttt{normalize} verifying key.
 
 Note that, because of the 1-1 normalization, there truly is exactly one \texttt{compose} circuit for each
 arity.
